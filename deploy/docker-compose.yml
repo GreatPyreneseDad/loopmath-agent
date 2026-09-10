@@ -1,0 +1,16 @@
+# Sidecar pattern: your app talks to loopmath-agent on the compose network.
+services:
+  loopmath-agent:
+    image: loopmath-agent:0.1.0
+    ports:
+      - "8787:8787"
+      - "127.0.0.1:8788:8788"
+    environment:
+      LOOPMATH_SINK_URL: ""            # e.g. https://gitdr.ai/api/v1/findings
+      LOOPMATH_SINK_TOKEN: ""
+      LOOPMATH_RUNAWAY_USD: "25"
+  your-agent:
+    image: your/agent
+    environment:
+      ANTHROPIC_BASE_URL: http://loopmath-agent:8787
+      OPENAI_BASE_URL: http://loopmath-agent:8787/openai

@@ -1,0 +1,29 @@
+# Sidecar in the same pod: base_url = http://localhost:8787
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: your-agent }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: your-agent } }
+  template:
+    metadata: { labels: { app: your-agent } }
+    spec:
+      containers:
+        - name: your-agent
+          image: your/agent
+          env:
+            - { name: ANTHROPIC_BASE_URL, value: "http://localhost:8787" }
+            - { name: OPENAI_BASE_URL,    value: "http://localhost:8787/openai" }
+        - name: loopmath-agent
+          image: loopmath-agent:0.1.0
+          ports: [{ containerPort: 8787 }, { containerPort: 8788 }]
+          env:
+            - { name: LOOPMATH_ADMIN_ADDR, value: ":8788" }
+            - name: LOOPMATH_SINK_URL
+              valueFrom: { secretKeyRef: { name: loopmath, key: sink_url, optional: true } }
+            - name: LOOPMATH_SINK_TOKEN
+              valueFrom: { secretKeyRef: { name: loopmath, key: sink_token, optional: true } }
+          resources:
+            requests: { cpu: 50m, memory: 64Mi }
+            limits:   { memory: 512Mi }
+          readinessProbe: { httpGet: { path: /healthz, port: 8788 } }
