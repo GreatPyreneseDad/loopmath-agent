@@ -12,12 +12,12 @@
     "finding": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["schema", "id", "at", "kind", "severity", "loop_id", "loop_key_kind", "provider", "model", "calls", "loop_usd", "loop_tokens", "loop_seconds", "evidence", "est_savings_usd", "recommendation", "agent"],
+      "required": ["schema", "id", "at", "kind", "severity", "loop_id", "loop_key_kind", "provider", "model", "calls", "loop_usd", "billing", "loop_tokens", "loop_seconds", "evidence", "est_savings_usd", "recommendation", "agent"],
       "properties": {
         "schema": { "const": "loopmath.findings/v1" },
         "id": { "type": "string" },
         "at": { "type": "string", "format": "date-time" },
-        "kind": { "enum": ["context_growth", "low_cache_rate", "redundant_context", "runaway_loop", "retry_storm", "error_burst", "unknown_price"] },
+        "kind": { "enum": ["context_growth", "low_cache_rate", "redundant_context", "runaway_loop", "retry_storm", "error_burst", "unknown_price", "model_price_swap"] },
         "severity": { "enum": ["info", "warn", "high"] },
         "loop_id": { "type": "string" },
         "loop_key_kind": { "enum": ["header", "body", "fingerprint"] },
@@ -25,6 +25,8 @@
         "model": { "type": "string" },
         "calls": { "type": "integer", "minimum": 1 },
         "loop_usd": { "type": "number", "minimum": 0 },
+        "billing": { "enum": ["api", "subscription"] },
+        "alt_model": { "type": "string" },
         "loop_tokens": { "type": "integer", "minimum": 0 },
         "loop_seconds": { "type": "number", "minimum": 0 },
         "evidence": { "type": "object", "additionalProperties": { "type": "number" } },

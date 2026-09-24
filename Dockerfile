@@ -7,5 +7,5 @@ RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o /loopmath-agent ./cmd/l
 FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=build /loopmath-agent /loopmath-agent
 EXPOSE 8787 8788 4318
-ENV LOOPMATH_ADMIN_ADDR=:8788 LOOPMATH_FINDINGS_FILE=
+ENV LOOPMATH_ADMIN_ADDR=:8788 LOOPMATH_FINDINGS_FILE=none
 ENTRYPOINT ["/loopmath-agent"]

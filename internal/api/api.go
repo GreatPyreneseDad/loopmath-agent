@@ -4,10 +4,12 @@
 package api
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/GreatPyreneseDad/loopmath-agent/internal/cost"
 	"github.com/GreatPyreneseDad/loopmath-agent/internal/findings"
@@ -21,6 +23,7 @@ type OTLPStats interface {
 }
 
 type Server struct {
+	token  string
 	engine *loop.Engine
 	emit   *findings.Emitter
 	price  *cost.Table
@@ -29,8 +32,8 @@ type Server struct {
 	mux    *http.ServeMux
 }
 
-func New(engine *loop.Engine, emit *findings.Emitter, price *cost.Table, proxy Stats, otlp OTLPStats) *Server {
-	s := &Server{engine: engine, emit: emit, price: price, proxy: proxy, otlp: otlp, mux: http.NewServeMux()}
+func New(engine *loop.Engine, emit *findings.Emitter, price *cost.Table, proxy Stats, otlp OTLPStats, token string) *Server {
+	s := &Server{token: token, engine: engine, emit: emit, price: price, proxy: proxy, otlp: otlp, mux: http.NewServeMux()}
 	s.mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("ok\n")) })
 	s.mux.HandleFunc("GET /v1/findings", s.findings)
 	s.mux.HandleFunc("GET /findings", s.findings)
@@ -42,7 +45,20 @@ func New(engine *loop.Engine, emit *findings.Emitter, price *cost.Table, proxy S
 	return s
 }
 
-func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) { s.mux.ServeHTTP(w, r) }
+func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if s.token != "" && r.URL.Path != "/healthz" {
+		got := r.Header.Get("X-Loopmath-Token")
+		if got == "" {
+			got = strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		}
+		if subtle.ConstantTimeCompare([]byte(s.token), []byte(got)) != 1 {
+			w.Header().Set("WWW-Authenticate", "Bearer")
+			http.Error(w, "loopmath: admin token required (Authorization: Bearer or X-Loopmath-Token)", http.StatusUnauthorized)
+			return
+		}
+	}
+	s.mux.ServeHTTP(w, r)
+}
 
 func limit(r *http.Request, def int) int {
 	if v, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil && v > 0 && v <= 10000 {

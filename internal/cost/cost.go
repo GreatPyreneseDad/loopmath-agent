@@ -59,13 +59,64 @@ var defaults = map[string]Price{
 	"gpt-4o":     {Input: 2.5, Output: 10, CacheRead: 1.25},
 	"o3":         {Input: 2, Output: 8, CacheRead: 0.5},
 	"o4-mini":    {Input: 1.1, Output: 4.4, CacheRead: 0.275},
-	// xAI — placeholders
-	"grok-4": {Input: 3, Output: 15, CacheRead: 0.75},
-	"grok-3": {Input: 3, Output: 15, CacheRead: 0.75},
+	// Google Gemini — ai.google.dev/gemini-api/docs/pricing, 2026-09-24 (paid tier; ≤200k tier for pro)
+	"gemini-3.8-flash":      {Input: 0.75, Output: 3.75, CacheRead: 0.075},
+	"gemini-3.7-flash":      {Input: 0.75, Output: 3.75, CacheRead: 0.075},
+	"gemini-3.6-flash":      {Input: 0.75, Output: 3.75, CacheRead: 0.075},
+	"gemini-3.5-flash-lite": {Input: 0.30, Output: 2.5, CacheRead: 0.03},
+	"gemini-3.5-flash":      {Input: 1.5, Output: 9, CacheRead: 0.15},
+	"gemini-3.1-flash-lite": {Input: 0.25, Output: 1.5, CacheRead: 0.025},
+	"gemini-3.1-pro":        {Input: 2, Output: 12, CacheRead: 0.2},
+	// xAI — docs.x.ai/docs/models, 2026-09-24 (no cached-input price published)
+	"grok-4.7": {Input: 2, Output: 6},
+	"grok-4":   {Input: 3, Output: 15, CacheRead: 0.75}, // older, unverified
+}
+
+// Family groups a model id into a line whose members are interchangeable
+// enough that suggesting a swap is reasonable. Returns "" if unknown.
+func Family(model string) string {
+	m := strings.ToLower(model)
+	for _, f := range []string{"claude-fable", "claude-mythos", "claude-opus", "claude-sonnet", "claude-haiku", "gpt-5", "gpt-4", "gemini-3.8-flash", "gemini-3.5-flash", "gemini-3.1-pro", "grok-4"} {
+		if strings.HasPrefix(m, f) {
+			return f
+		}
+	}
+	return ""
+}
+
+// CheaperCacheRead returns the same-family model with the lowest cache-read
+// price that is strictly cheaper than the given model's. ok=false if none.
+func (t *Table) CheaperCacheRead(model string) (alt string, altPrice Price, ok bool) {
+	fam := Family(model)
+	cur, known := t.Lookup(model)
+	if fam == "" || !known {
+		return "", Price{}, false
+	}
+	curCR := cur.CacheRead
+	if curCR == 0 {
+		curCR = cur.Input
+	}
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	best := curCR
+	for k, p := range t.prices {
+		if Family(k) != fam || strings.HasPrefix(strings.ToLower(model), k) {
+			continue
+		}
+		cr := p.CacheRead
+		if cr == 0 {
+			cr = p.Input
+		}
+		// same family, cheaper cache read, and not more expensive on output (avoid suggesting a downgrade that costs more elsewhere)
+		if cr < best && p.Output <= cur.Output && p.Input <= cur.Input {
+			best, alt, altPrice, ok = cr, k, p, true
+		}
+	}
+	return
 }
 
 func Default() *Table {
-	t := &Table{prices: map[string]Price{}, AsOf: "2026-09-24 built-in defaults (Anthropic verified; OpenAI/xAI placeholders)"}
+	t := &Table{prices: map[string]Price{}, AsOf: "2026-09-24 built-in defaults (Anthropic, Gemini, xAI grok-4.7 verified; OpenAI placeholders)"}
 	for k, v := range defaults {
 		t.prices[k] = v
 	}

@@ -49,7 +49,9 @@ func main() {
 	}
 	emit, err := findings.NewEmitter(cfg.FindingsFile, cfg.SinkURL, cfg.SinkToken, cfg.SinkFlush, 5000)
 	if err != nil {
-		log.Fatalf("findings: %v", err)
+		// read-only filesystem (distroless, Fly) — keep running with the in-memory ring + sink
+		log.Printf("findings file %q unavailable (%v); continuing without it", cfg.FindingsFile, err)
+		emit, _ = findings.NewEmitter("", cfg.SinkURL, cfg.SinkToken, cfg.SinkFlush, 5000)
 	}
 	defer emit.Close()
 
@@ -58,26 +60,45 @@ func main() {
 	if err != nil {
 		log.Fatalf("proxy: %v", err)
 	}
-	rcv := otlp.New(engine)
-	adm := api.New(engine, emit, price, px, rcv)
+	rcv := otlp.New(engine).WithToken(cfg.ProxyToken)
+	adm := api.New(engine, emit, price, px, rcv, cfg.AdminToken)
 
-	proxySrv := &http.Server{Addr: cfg.ProxyAddr, Handler: px, ReadHeaderTimeout: 30 * time.Second}
+	var front http.Handler = px
+	if cfg.Single {
+		// One port for PaaS: /_loopmath/* → admin, /v1/traces → otlp, everything else → proxy
+		mux := http.NewServeMux()
+		mux.Handle("/_loopmath/", http.StripPrefix("/_loopmath", adm))
+		mux.Handle("/v1/traces", rcv)
+		mux.Handle("/", px)
+		front = mux
+		if cfg.ProxyToken == "" || cfg.AdminToken == "" {
+			log.Printf("WARNING: -single without -proxy-token/-admin-token exposes the proxy and cost data to anyone who can reach %s", cfg.ProxyAddr)
+		}
+	}
+	proxySrv := &http.Server{Addr: cfg.ProxyAddr, Handler: front, ReadHeaderTimeout: 30 * time.Second}
 	adminSrv := &http.Server{Addr: cfg.AdminAddr, Handler: adm, ReadHeaderTimeout: 10 * time.Second}
 
 	go func() {
-		log.Printf("loopmath-agent %s: proxy on %s (anthropic→%s, openai→%s)", loop.Version, cfg.ProxyAddr, cfg.AnthropicUpstream, cfg.OpenAIUpstream)
+		log.Printf("loopmath-agent %s: proxy on %s (anthropic→%s, openai→%s, gemini→%s) billing=%s", loop.Version, cfg.ProxyAddr, cfg.AnthropicUpstream, cfg.OpenAIUpstream, cfg.GeminiUpstream, cfg.Billing)
+		if cfg.ProxyToken != "" {
+			log.Printf("proxy token required (X-Loopmath-Token or /t/<token>/)")
+		}
 		if err := proxySrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.Fatal(err)
 		}
 	}()
-	go func() {
-		log.Printf("admin on %s: /v1/findings /v1/loops /metrics", cfg.AdminAddr)
-		if err := adminSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Fatal(err)
-		}
-	}()
+	if cfg.Single {
+		log.Printf("single-port mode: admin at %s/_loopmath/ (v1/findings, v1/loops, metrics), otlp at %s/v1/traces", cfg.ProxyAddr, cfg.ProxyAddr)
+	} else {
+		go func() {
+			log.Printf("admin on %s: /v1/findings /v1/loops /metrics", cfg.AdminAddr)
+			if err := adminSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				log.Fatal(err)
+			}
+		}()
+	}
 	var otlpSrv *http.Server
-	if cfg.OTLPAddr != "" {
+	if cfg.OTLPAddr != "" && !cfg.Single {
 		otlpSrv = &http.Server{Addr: cfg.OTLPAddr, Handler: rcv, ReadHeaderTimeout: 30 * time.Second}
 		go func() {
 			log.Printf("otlp receiver on %s: POST /v1/traces (GenAI spans; protobuf or JSON, gzip ok)", cfg.OTLPAddr)

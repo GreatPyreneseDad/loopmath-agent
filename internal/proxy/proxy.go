@@ -17,6 +17,7 @@ package proxy
 import (
 	"bytes"
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/hex"
 	"io"
 	"log"
@@ -69,6 +70,9 @@ func New(cfg *config.Config, engine *loop.Engine) (*Proxy, error) {
 		return nil, err
 	}
 	if err := add("openai", cfg.OpenAIUpstream, meter.OpenAI); err != nil {
+		return nil, err
+	}
+	if err := add("gemini", cfg.GeminiUpstream, meter.Gemini); err != nil {
 		return nil, err
 	}
 	for k, v := range cfg.Extra {
@@ -155,6 +159,8 @@ func (p *Proxy) route(path string) (*upstream, string) {
 	switch meter.DetectProvider(path) {
 	case meter.Anthropic:
 		return p.ups["anthropic"], path
+	case meter.Gemini:
+		return p.ups["gemini"], path
 	default:
 		return p.ups["openai"], path
 	}
@@ -166,9 +172,40 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("ok\n"))
 		return
 	}
-	up, rest := p.route(r.URL.Path)
+	path := r.URL.Path
+	// /t/<token>/... — for SDKs that cannot set custom headers
+	var pathTok string
+	if strings.HasPrefix(path, "/t/") {
+		rest := path[3:]
+		if i := strings.IndexByte(rest, '/'); i > 0 {
+			pathTok, path = rest[:i], rest[i:]
+		}
+	}
+	if p.cfg.ProxyToken != "" {
+		hdrTok := r.Header.Get("X-Loopmath-Token")
+		if !tokenOK(p.cfg.ProxyToken, hdrTok) && !tokenOK(p.cfg.ProxyToken, pathTok) {
+			w.Header().Set("WWW-Authenticate", "X-Loopmath-Token")
+			http.Error(w, "loopmath: missing or invalid proxy token (X-Loopmath-Token header or /t/<token>/ path prefix)", http.StatusUnauthorized)
+			return
+		}
+	}
+	// /l/<loop-id>/... — per-item loop id in the base URL, also for header-less SDKs
+	var pathLoop string
+	if strings.HasPrefix(path, "/l/") {
+		rest := path[3:]
+		if i := strings.IndexByte(rest, '/'); i > 0 {
+			pathLoop, path = rest[:i], rest[i:]
+		}
+	}
+	up, rest := p.route(path)
 	x := &exchange{p: p, start: time.Now(), loopHdr: r.Header.Get(p.cfg.LoopHeader)}
+	if x.loopHdr == "" {
+		x.loopHdr = pathLoop
+	}
 	x.call = &meter.Call{ID: newID(), At: x.start, Provider: up.prov}
+	if up.prov == meter.Gemini {
+		x.call.Model = geminiModelFromPath(rest)
+	}
 	if hint := r.Header.Get("X-Session-Id"); hint != "" && x.loopHdr == "" {
 		x.loopHdr = hint
 	}
@@ -203,6 +240,24 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	p.rp.ServeHTTP(w, r)
 }
 
+// tokenOK is a constant-time compare so the proxy token can't be guessed a byte at a time.
+func tokenOK(want, got string) bool {
+	return got != "" && subtle.ConstantTimeCompare([]byte(want), []byte(got)) == 1
+}
+
+// geminiModelFromPath: /v1beta/models/gemini-2.5-flash:generateContent -> gemini-2.5-flash
+func geminiModelFromPath(path string) string {
+	i := strings.Index(path, "/models/")
+	if i < 0 {
+		return ""
+	}
+	m := path[i+len("/models/"):]
+	if j := strings.IndexAny(m, ":/?"); j >= 0 {
+		m = m[:j]
+	}
+	return m
+}
+
 func itoa(n int) string {
 	var b [20]byte
 	i := len(b)
@@ -221,6 +276,7 @@ func (p *Proxy) director(r *http.Request) {
 	up := p.ups[r.Header.Get("X-Loopmath-Upstream")]
 	r.Header.Del("X-Loopmath-Upstream")
 	r.Header.Del(p.cfg.LoopHeader)
+	r.Header.Del("X-Loopmath-Token")
 	r.Header.Del("Accept-Encoding") // identity so we can read usage
 	r.URL.Scheme = up.url.Scheme
 	r.URL.Host = up.url.Host

@@ -1,6 +1,6 @@
 {
   "name": "loopmath",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Meter model calls through a local proxy and get loop-cost findings: context growth, missed prompt caching, redundant context, runaway loops, retry storms. Prompts never leave the machine.",
   "author": { "name": "ROSE Corp", "url": "https://gitdr.ai" },
   "homepage": "https://gitdr.ai/agent.md",

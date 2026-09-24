@@ -19,9 +19,17 @@ type Config struct {
 	AdminAddr string // cold path: /findings, /loops, /metrics, /healthz
 	OTLPAddr  string // second ingest: OTLP/HTTP GenAI spans on /v1/traces ("" disables)
 
+	// Public mode — for serverless callers (Supabase Edge, Vercel, Lambda) that
+	// must reach the agent over the internet.
+	Single     bool   // serve proxy + admin (/_loopmath/*) + otlp (/v1/traces) on ProxyAddr only
+	ProxyToken string // required on every proxied request: X-Loopmath-Token header or /t/<token>/ path prefix
+	AdminToken string // required on admin endpoints (Authorization: Bearer or X-Loopmath-Token)
+	Billing    string // api | subscription — labels dollars as invoice vs list-price counterfactual
+
 	// Upstreams
 	AnthropicUpstream string
 	OpenAIUpstream    string
+	GeminiUpstream    string
 	// Extra upstreams: prefix=url, e.g. "azure=https://x.openai.azure.com"
 	Extra map[string]string
 
@@ -95,11 +103,20 @@ func Load(args []string) (*Config, error) {
 	c := &Config{Extra: map[string]string{}}
 	fs := flag.NewFlagSet("loopmath-agent", flag.ContinueOnError)
 
-	fs.StringVar(&c.ProxyAddr, "proxy", env("LOOPMATH_PROXY_ADDR", ":8787"), "proxy listen address (apps point base_url here)")
+	defProxy := env("LOOPMATH_PROXY_ADDR", ":8787")
+	if port := os.Getenv("PORT"); port != "" && os.Getenv("LOOPMATH_PROXY_ADDR") == "" {
+		defProxy = ":" + port // PaaS convention (Fly, Railway, Render, Heroku)
+	}
+	fs.StringVar(&c.ProxyAddr, "proxy", defProxy, "proxy listen address (apps point base_url here)")
 	fs.StringVar(&c.AdminAddr, "admin", env("LOOPMATH_ADMIN_ADDR", "127.0.0.1:8788"), "admin listen address (/findings /loops /metrics)")
 	fs.StringVar(&c.OTLPAddr, "otlp", env("LOOPMATH_OTLP_ADDR", ":4318"), "OTLP/HTTP receiver address for GenAI spans (empty disables)")
 	fs.StringVar(&c.AnthropicUpstream, "anthropic", env("LOOPMATH_ANTHROPIC_UPSTREAM", "https://api.anthropic.com"), "Anthropic upstream")
 	fs.StringVar(&c.OpenAIUpstream, "openai", env("LOOPMATH_OPENAI_UPSTREAM", "https://api.openai.com"), "OpenAI-compatible upstream")
+	fs.StringVar(&c.GeminiUpstream, "gemini", env("LOOPMATH_GEMINI_UPSTREAM", "https://generativelanguage.googleapis.com"), "Gemini upstream")
+	fs.BoolVar(&c.Single, "single", os.Getenv("LOOPMATH_SINGLE") == "1" || os.Getenv("PORT") != "", "single port: proxy + /_loopmath/* admin + /v1/traces on -proxy (auto when $PORT is set)")
+	fs.StringVar(&c.ProxyToken, "proxy-token", env("LOOPMATH_PROXY_TOKEN", ""), "require this token on proxied requests (X-Loopmath-Token or /t/<token>/ prefix)")
+	fs.StringVar(&c.AdminToken, "admin-token", env("LOOPMATH_ADMIN_TOKEN", ""), "require this token on admin endpoints")
+	fs.StringVar(&c.Billing, "billing", env("LOOPMATH_BILLING", "api"), "api|subscription — how to label dollars in findings")
 	var extra string
 	fs.StringVar(&extra, "extra", env("LOOPMATH_EXTRA_UPSTREAMS", ""), "extra upstreams: name=url,name=url (served at /name/...)")
 
@@ -126,6 +143,13 @@ func Load(args []string) (*Config, error) {
 
 	if err := fs.Parse(args); err != nil {
 		return nil, err
+	}
+	switch c.FindingsFile {
+	case "none", "off", "-", "/dev/null":
+		c.FindingsFile = "" // env vars can't carry an empty string, so accept a sentinel
+	}
+	if c.Billing != "api" && c.Billing != "subscription" {
+		return nil, fmt.Errorf("-billing must be api or subscription")
 	}
 	if extra != "" {
 		for _, kv := range strings.Split(extra, ",") {

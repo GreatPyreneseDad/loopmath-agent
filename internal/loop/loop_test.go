@@ -28,8 +28,8 @@ func TestCacheRateWithCacheWriteFirst(t *testing.T) {
 	for i, u := range calls {
 		l = e.Observe(&meter.Call{ID: "c", At: now.Add(time.Duration(i) * time.Second), Provider: meter.Anthropic, Model: "claude-fable-5", Usage: u, SystemHash: "s", FirstUserHash: "u"}, "sess")
 	}
-	if l.CacheRate < 0.9 || l.CacheRate > 1 {
-		t.Fatalf("cache rate %.3f, want ~1", l.CacheRate)
+	if l.CacheRate == nil || *l.CacheRate < 0.9 || *l.CacheRate > 1 {
+		t.Fatalf("cache rate %v, want ~1", l.CacheRate)
 	}
 	if l.USD <= 0 {
 		t.Fatalf("claude-fable-5 should be priced, got %f", l.USD)
@@ -41,5 +41,38 @@ func TestCacheRateWithCacheWriteFirst(t *testing.T) {
 		if f.Kind == findings.LowCacheRate || f.Kind == findings.UnknownPrice {
 			t.Fatalf("spurious finding %s", f.Kind)
 		}
+	}
+}
+
+// Christopher's real Claude Code loop, 2026-09-24: 15 calls on claude-fable-5.
+// Expect model_price_swap to name claude-fable-5-1 and land near −30%.
+func TestModelPriceSwapOnRealLoop(t *testing.T) {
+	cfg, _ := config.Load([]string{"-findings-file", ""})
+	emit, _ := findings.NewEmitter("", "", "", time.Second, 100)
+	e := New(cfg, cost.Default(), emit)
+	now := time.Now()
+	total := cost.Usage{Input: 13553, Output: 8419, CacheRead: 2238029, CacheWrite: 222461}
+	for i := 0; i < 15; i++ {
+		u := cost.Usage{Input: total.Input / 15, Output: total.Output / 15, CacheRead: total.CacheRead / 15, CacheWrite: total.CacheWrite / 15}
+		e.Observe(&meter.Call{ID: "c", At: now.Add(time.Duration(i) * time.Second), Provider: meter.Anthropic, Model: "claude-fable-5", Usage: u, SystemHash: "s", FirstUserHash: "u"}, "cc")
+	}
+	var got *findings.Finding
+	for _, f := range emit.Recent(20) {
+		if f.Kind == findings.ModelPriceSwap {
+			ff := f
+			got = &ff
+		}
+	}
+	if got == nil {
+		t.Fatalf("expected model_price_swap; got %v", emit.Recent(20))
+	}
+	if got.AltModel != "claude-fable-5-1" {
+		t.Fatalf("alt model %q", got.AltModel)
+	}
+	if got.Evidence["saving_pct"] < 0.25 || got.Evidence["saving_pct"] > 0.35 {
+		t.Fatalf("saving pct %.2f, expected ~0.30 (%+v)", got.Evidence["saving_pct"], got.Evidence)
+	}
+	if got.Billing != "api" {
+		t.Fatalf("billing label %q", got.Billing)
 	}
 }

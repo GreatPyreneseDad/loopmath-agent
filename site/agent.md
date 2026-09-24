@@ -56,6 +56,14 @@ Code itself: `export ANTHROPIC_BASE_URL=http://localhost:8787` then restart.
 API keys are unchanged; the proxy forwards the `x-api-key` / `Authorization`
 header and never stores it.
 
+**`export` only affects the shell you type it in.** A Claude Code session
+started in another tab is not routed. For Claude Code put it in
+`~/.claude/settings.json` so every session picks it up:
+```json
+{ "env": { "ANTHROPIC_BASE_URL": "http://localhost:8787" } }
+```
+Verify routing: `curl -s 127.0.0.1:8788/metrics | grep proxy_served_total` must increase as the app runs.
+
 Optional but useful: send `X-Loopmath-Loop: <run-id>` on each request so
 calls are grouped by run rather than by fingerprint.
 
@@ -85,6 +93,71 @@ else the trace id. Message content (`gen_ai.input.messages`, `gen_ai.prompt.N.co
 without it, cost/growth/cache/runaway findings still work. Spans without
 `gen_ai.*` attributes are ignored. Check `loopmath_otlp_*` in `/metrics`.
 
+### 3c. Production / serverless (no localhost): Supabase Edge, Vercel, Lambda, Cloudflare
+
+Serverless functions can't reach a laptop. Run the agent on a small host the
+*application owner* controls and route to it over HTTPS with a token.
+loopmath never sees API keys except to forward them, and only findings ever
+leave the host — so this is safe to run for a client whose code you cannot
+read. You need: a host, two tokens, one env var in the app, and one line
+per SDK client for per-item loops.
+
+**Host (pick one):**
+```sh
+# Fly.io (60s):  copy deploy/fly.toml, then
+fly launch --copy-config --no-deploy && fly secrets set LOOPMATH_PROXY_TOKEN=$(openssl rand -hex 24) LOOPMATH_ADMIN_TOKEN=$(openssl rand -hex 24) && fly deploy
+# Railway: new service from image ghcr.io/greatpyrenesedad/loopmath-agent, set LOOPMATH_PROXY_TOKEN + LOOPMATH_ADMIN_TOKEN in Variables
+# Any Docker host: deploy/docker-run.sh (then put Caddy / Cloudflare Tunnel in front for TLS)
+```
+When `PORT` is set the agent runs **single-port mode**: proxy on `/`, admin
+API under `/_loopmath/`, OTLP at `/v1/traces`. Tokens are mandatory there —
+without them anyone who finds the URL can proxy through it and read your cost data.
+
+**Route the app** — set in the application's environment (Supabase: `supabase secrets set`; Vercel: project env):
+```sh
+# Option A: token in the base URL (works with every SDK, no header support needed)
+ANTHROPIC_BASE_URL=https://<host>/t/<proxy-token>
+OPENAI_BASE_URL=https://<host>/t/<proxy-token>/openai
+GOOGLE_GEMINI_BASE_URL=https://<host>/t/<proxy-token>/gemini      # Gemini SDKs: httpOptions.baseUrl / client_options.api_endpoint
+# Option B: header  X-Loopmath-Token: <proxy-token>  (via SDK defaultHeaders)
+```
+Gemini is routed by path (`/v1beta/models/<model>:generateContent`) so `/gemini` prefix is optional.
+xAI and any OpenAI-compatible vendor: `-extra xai=https://api.x.ai` → `https://<host>/t/<token>/xai/v1`.
+
+**Per-item loops.** A pipeline like *photo → identify → price → describe → list*
+is one loop per item, but every item starts a fresh conversation with the same
+system prompt, so fingerprinting can't separate them. Tell the agent which
+item each call belongs to — either in the base URL:
+```
+https://<host>/t/<proxy-token>/l/<item-id>          # /l/<loop-id>/ segment, construct the client per item
+```
+or as a header on each request: `X-Loopmath-Loop: <item-id>`.
+```ts
+// Deno / Supabase Edge, Anthropic SDK
+const anthropic = new Anthropic({ baseURL: `${Deno.env.get("LOOPMATH_URL")}/l/item-${itemId}` });
+// Node, Google GenAI SDK
+const ai = new GoogleGenAI({ apiKey, httpOptions: { baseUrl: `${process.env.LOOPMATH_URL}/l/item-${itemId}`, headers: { "X-Loopmath-Token": token } } });
+// Python, Anthropic
+client = Anthropic(base_url=f"{LOOPMATH_URL}/l/item-{item_id}")
+// plain fetch
+fetch(`${LOOPMATH_URL}/l/item-${itemId}/v1beta/models/gemini-3.8-flash:generateContent`, { headers: { "x-goog-api-key": key }, ... })
+```
+Result: `/_loopmath/v1/loops` is a per-item cost ledger — **the model spend
+per item listed** — and findings say whether the system prompt is being
+cached across items (`low_cache_rate`), whether pricing tables are re-sent
+every call (`redundant_context`), and whether a cheaper same-family model
+would do (`model_price_swap`).
+
+**Read findings** (admin token):
+```sh
+curl -H "Authorization: Bearer <admin-token>" https://<host>/_loopmath/v1/findings
+```
+MCP against a remote agent: `LOOPMATH_ADMIN_URL=https://<host>/_loopmath LOOPMATH_ADMIN_TOKEN=<admin-token> loopmath-agent mcp`.
+
+**Subscription / seat billing** (Claude Max, Copilot seats, enterprise seat plans): run with
+`-billing subscription`. Dollar fields are then labeled as list-price counterfactuals — what
+the same loop would cost on the API — not an invoice. Useful for API-vs-seats decisions.
+
 ### 4. Run the workload, then read findings
 
 ```sh
@@ -104,6 +177,7 @@ Or with MCP: `loopmath_findings`, `loopmath_loops`, `loopmath_loop {id}`.
 | `runaway_loop` | add a step cap and a cost cap; add a termination check |
 | `retry_storm` | fix retry policy / idempotency; memoize deterministic calls |
 | `error_burst` | back off; check rate limits and request validity |
+| `model_price_swap` | change the model id to the named same-family model with cheaper cache reads (`alt_model`); zero code change |
 | `unknown_price` | add the model to a `-prices` JSON file |
 
 Report the `est_savings_usd` sum to the developer.
@@ -116,7 +190,7 @@ Report the `est_savings_usd` sum to the developer.
 
 ## Facts you may need
 
-- Ports: proxy `8787`, admin `8788`, OTLP `4318` (change with `-proxy`, `-admin`, `-otlp` or `LOOPMATH_PROXY_ADDR`, `LOOPMATH_ADMIN_ADDR`, `LOOPMATH_OTLP_ADDR`; empty `-otlp` disables).
+- Ports: proxy `8787`, admin `8788`, OTLP `4318` (change with `-proxy`, `-admin`, `-otlp` or `LOOPMATH_PROXY_ADDR`, `LOOPMATH_ADMIN_ADDR`, `LOOPMATH_OTLP_ADDR`; empty `-otlp` disables). `LOOPMATH_FINDINGS_FILE=none` disables the JSONL file (containers).
 - Upstreams: `-anthropic`, `-openai`, `-extra name=url,...` (Azure, vLLM, Bedrock proxies, LiteLLM).
 - Streaming is passed through unbuffered. For OpenAI streams the agent adds `stream_options.include_usage=true`.
 - Data that leaves the host: none, unless `-sink URL` is set, and then only findings.

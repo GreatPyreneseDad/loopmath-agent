@@ -19,6 +19,7 @@ const (
 	RetryStorm       Kind = "retry_storm"       // identical request repeated
 	UnknownPrice     Kind = "unknown_price"     // model not in price table
 	ErrorBurst       Kind = "error_burst"       // upstream 4xx/5xx repeating
+	ModelPriceSwap   Kind = "model_price_swap"  // same-family model with cheaper cache reads would cut the loop cost
 )
 
 type Severity string
@@ -42,7 +43,9 @@ type Finding struct {
 	Model    string `json:"model"`
 
 	Calls        int     `json:"calls"`
-	LoopUSD      float64 `json:"loop_usd"`
+	LoopUSD      float64 `json:"loop_usd"`            // list price. billing=subscription means this is a counterfactual, not an invoice
+	Billing      string  `json:"billing"`             // api | subscription
+	AltModel     string  `json:"alt_model,omitempty"` // model_price_swap only
 	LoopTokens   int     `json:"loop_tokens"`
 	LoopDuration float64 `json:"loop_seconds"`
 

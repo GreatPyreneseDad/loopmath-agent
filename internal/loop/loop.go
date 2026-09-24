@@ -46,9 +46,9 @@ type Loop struct {
 	Latency []float64 `json:"latency_ms"`
 
 	// derived
-	CacheableTokens int     `json:"cacheable_tokens"` // sum over i>0 of min(ctx[i-1], ctx[i])
-	CacheRate       float64 `json:"cache_rate"`
-	Redundancy      float64 `json:"redundancy"` // mean overlap of call shingles vs seen
+	CacheableTokens int      `json:"cacheable_tokens"` // sum over i>0 of min(ctx[i-1], ctx[i])
+	CacheRate       *float64 `json:"cache_rate"`       // nil until there is a previous call to compare against
+	Redundancy      float64  `json:"redundancy"`       // mean overlap of call shingles vs seen
 	redundancySum   float64
 	DominantCall    int    `json:"dominant_call"` // index of costliest call
 	DebugSystem     string `json:"system_prefix,omitempty"`
@@ -149,7 +149,8 @@ func (e *Engine) Observe(c *meter.Call, headerHint string) *Loop {
 	l.CallUSD = appendBounded(l.CallUSD, usd, 2000)
 	l.Latency = appendBounded(l.Latency, float64(c.Latency.Milliseconds()), 2000)
 	if l.CacheableTokens > 0 {
-		l.CacheRate = min(1, float64(l.Usage.CacheRead)/float64(l.CacheableTokens))
+		cr := min(1, float64(l.Usage.CacheRead)/float64(l.CacheableTokens))
+		l.CacheRate = &cr
 	}
 	if usd > l.CallUSD[l.DominantCall] {
 		l.DominantCall = len(l.CallUSD) - 1
@@ -187,11 +188,11 @@ func (e *Engine) base(l *Loop, c *meter.Call, kind findings.Kind, sev findings.S
 		LoopID: l.ID, LoopKey: l.KeyKind, Provider: l.Provider, Model: l.Model,
 		Calls: l.Calls, LoopUSD: round(l.USD), LoopTokens: l.Usage.Total(),
 		LoopDuration: l.LastAt.Sub(l.FirstAt).Seconds(),
-		Evidence:     map[string]float64{}, Agent: "loopmath-agent/" + Version,
+		Evidence:     map[string]float64{}, Agent: "loopmath-agent/" + Version, Billing: e.cfg.Billing,
 	}
 }
 
-var Version = "0.1.1"
+var Version = "0.2.0"
 
 func round(f float64) float64 { return math.Round(f*1e4) / 1e4 }
 
@@ -241,11 +242,11 @@ func (e *Engine) rules(l *Loop, c *meter.Call) {
 	}
 
 	// low_cache_rate
-	if l.Calls >= 3 && l.emitted[findings.LowCacheRate] == 0 && l.CacheableTokens >= cfg.MinCacheableTokens && l.CacheRate < cfg.LowCacheRate {
+	if l.Calls >= 3 && l.emitted[findings.LowCacheRate] == 0 && l.CacheableTokens >= cfg.MinCacheableTokens && l.CacheRate != nil && *l.CacheRate < cfg.LowCacheRate {
 		f := e.base(l, c, findings.LowCacheRate, findings.Warn)
 		f.Evidence["cacheable_tokens"] = float64(l.CacheableTokens)
 		f.Evidence["cache_read_tokens"] = float64(l.Usage.CacheRead)
-		f.Evidence["cache_rate"] = round(l.CacheRate)
+		f.Evidence["cache_rate"] = round(*l.CacheRate)
 		missed := float64(l.CacheableTokens - l.Usage.CacheRead)
 		f.EstSavingsUSD = round(missed * (inPrice - crPrice))
 		f.Recommendation = "loopmath: a repeated prefix is being re-billed at full input price. Enable prompt caching on the stable prefix (system + tools + early turns). https://gitdr.ai/fix/caching"
@@ -307,6 +308,63 @@ func (e *Engine) rules(l *Loop, c *meter.Call) {
 		l.emitted[findings.ErrorBurst] = l.Errors / 3
 		e.emit.Emit(f)
 	}
+
+	e.priceSwap(l, c)
+}
+
+// priceSwap: when cache reads are a material share of loop cost and a
+// same-family model reads cache cheaper, say exactly what the loop would
+// have cost. Fires once at >=5 calls, re-evaluates at each doubling of calls.
+func (e *Engine) priceSwap(l *Loop, c *meter.Call) {
+	if l.Calls < 5 || !c.PriceKnown || l.USD <= 0 {
+		return
+	}
+	level := l.emitted[findings.ModelPriceSwap]
+	if level > 0 && l.Calls < 5<<level {
+		return
+	}
+	cur, _ := e.price.Lookup(c.Model)
+	curCR := cur.CacheRead
+	if curCR == 0 {
+		curCR = cur.Input
+	}
+	readUSD := float64(l.Usage.CacheRead) * curCR / 1e6
+	if readUSD/l.USD < 0.25 {
+		return
+	}
+	alt, ap, ok := e.price.CheaperCacheRead(c.Model)
+	if !ok {
+		return
+	}
+	aCR := ap.CacheRead
+	if aCR == 0 {
+		aCR = ap.Input
+	}
+	aCW := ap.CacheWrite
+	if aCW == 0 {
+		aCW = ap.Input
+	}
+	altTotal := (float64(l.Usage.Input)*ap.Input + float64(l.Usage.Output)*ap.Output + float64(l.Usage.CacheRead)*aCR + float64(l.Usage.CacheWrite)*aCW) / 1e6
+	saving := l.USD - altTotal
+	if saving <= 0 || saving/l.USD < 0.1 {
+		return
+	}
+	sev := findings.Warn
+	if saving > 5 {
+		sev = findings.High
+	}
+	f := e.base(l, c, findings.ModelPriceSwap, sev)
+	f.AltModel = alt
+	f.Evidence["cache_read_share"] = round(readUSD / l.USD)
+	f.Evidence["current_cache_read_per_mtok"] = curCR
+	f.Evidence["alt_cache_read_per_mtok"] = aCR
+	f.Evidence["alt_loop_usd"] = round(altTotal)
+	f.Evidence["saving_pct"] = round(saving / l.USD)
+	f.EstSavingsUSD = round(saving)
+	f.Recommendation = fmt.Sprintf("loopmath: %.0f%% of this loop is cache reads at $%.2f/M. %s reads cache at $%.2f/M — same %d calls: $%.2f instead of $%.2f (−%.0f%%). Change the model id; no code change. https://gitdr.ai/fix/model-swap",
+		100*readUSD/l.USD, curCR, alt, aCR, l.Calls, altTotal, l.USD, 100*saving/l.USD)
+	l.emitted[findings.ModelPriceSwap] = level + 1
+	e.emit.Emit(f)
 }
 
 func median(xs []int) float64 {

@@ -1,0 +1,10 @@
+{
+  "$schema": "https://railway.app/railway.schema.json",
+  "build": { "builder": "DOCKERFILE", "dockerfilePath": "Dockerfile" },
+  "deploy": {
+    "healthcheckPath": "/healthz",
+    "restartPolicyType": "ON_FAILURE",
+    "numReplicas": 1
+  },
+  "_comment": "Set LOOPMATH_PROXY_TOKEN and LOOPMATH_ADMIN_TOKEN in Variables. Railway sets PORT, which enables single-port mode. Private URL for same-project services: http://loopmath.railway.internal:PORT ; public URL for serverless callers."
+}

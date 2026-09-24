@@ -1,0 +1,27 @@
+# fly launch --copy-config --no-deploy && fly secrets set LOOPMATH_PROXY_TOKEN=... LOOPMATH_ADMIN_TOKEN=... && fly deploy
+# Then: base_url = https://<app>.fly.dev/t/<proxy-token>
+app = "loopmath-CHANGE-ME"
+primary_region = "sjc"
+
+[build]
+  image = "ghcr.io/greatpyrenesedad/loopmath-agent:latest"
+
+[env]
+  PORT = "8080"                 # enables single-port mode automatically
+  LOOPMATH_FINDINGS_FILE = "none"   # no disk on Fly by default; read findings via /_loopmath/v1/findings or a sink
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = false    # keep loops in memory
+  auto_start_machines = true
+  min_machines_running = 1
+
+[[http_service.checks]]
+  path = "/healthz"
+  interval = "30s"
+  timeout = "5s"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"

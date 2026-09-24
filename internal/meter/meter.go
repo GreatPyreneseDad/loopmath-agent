@@ -22,6 +22,7 @@ type Provider string
 const (
 	Anthropic Provider = "anthropic"
 	OpenAI    Provider = "openai"
+	Gemini    Provider = "gemini"
 	Unknown   Provider = "unknown"
 )
 
@@ -59,6 +60,8 @@ type Call struct {
 // DetectProvider by path.
 func DetectProvider(path string) Provider {
 	switch {
+	case strings.Contains(path, ":generateContent"), strings.Contains(path, ":streamGenerateContent"), strings.Contains(path, "/models/gemini"):
+		return Gemini
 	case strings.Contains(path, "/v1/messages"):
 		return Anthropic
 	case strings.Contains(path, "/chat/completions"), strings.Contains(path, "/v1/responses"), strings.Contains(path, "/completions"):
@@ -132,6 +135,10 @@ func ParseRequest(c *Call, body []byte) (out []byte, rewritten bool) {
 		if json.Unmarshal(t, &arr) == nil {
 			c.Tools = len(arr)
 		}
+	}
+	// Gemini: {contents:[{role,parts:[{text}]}], systemInstruction:{parts:[{text}]}}
+	if c.Provider == Gemini {
+		return parseGeminiRequest(c, body, req), false
 	}
 	// system: Anthropic top-level (string or blocks); OpenAI role=system/developer
 	var systemText string
@@ -231,6 +238,106 @@ func ParseRequest(c *Call, body []byte) (out []byte, rewritten bool) {
 
 func hasKey(m map[string]json.RawMessage, k string) bool { _, ok := m[k]; return ok }
 
+type geminiContent struct {
+	Role  string `json:"role"`
+	Parts []struct {
+		Text string `json:"text"`
+	} `json:"parts"`
+}
+
+func (g geminiContent) text() string {
+	var sb strings.Builder
+	for _, p := range g.Parts {
+		sb.WriteString(p.Text)
+		sb.WriteByte('\n')
+	}
+	return sb.String()
+}
+
+func parseGeminiRequest(c *Call, body []byte, req map[string]json.RawMessage) []byte {
+	var systemText, firstUser string
+	var all strings.Builder
+	if si, ok := req["systemInstruction"]; ok {
+		var g geminiContent
+		if json.Unmarshal(si, &g) == nil {
+			systemText = g.text()
+		}
+	} else if si, ok := req["system_instruction"]; ok {
+		var g geminiContent
+		if json.Unmarshal(si, &g) == nil {
+			systemText = g.text()
+		}
+	}
+	all.WriteString(systemText)
+	var contents []geminiContent
+	if cs, ok := req["contents"]; ok {
+		if json.Unmarshal(cs, &contents) != nil {
+			var one geminiContent
+			if json.Unmarshal(cs, &one) == nil {
+				contents = []geminiContent{one}
+			}
+		}
+	}
+	c.Messages = len(contents)
+	for _, g := range contents {
+		t := g.text()
+		if (g.Role == "user" || g.Role == "") && firstUser == "" {
+			firstUser = t
+		}
+		all.WriteString(t)
+	}
+	if t, ok := req["tools"]; ok {
+		var arr []json.RawMessage
+		if json.Unmarshal(t, &arr) == nil {
+			c.Tools = len(arr)
+		}
+	}
+	c.SystemHash = short([]byte(systemText))
+	c.FirstUserHash = short([]byte(firstUser))
+	c.ContentChars = all.Len()
+	c.Shingles = shingle.Of(all.String())
+	if len(systemText) > 0 {
+		c.SystemPrefix = systemText[:min(len(systemText), 48)]
+	}
+	c.RequestHash = short(append([]byte(c.Model+"|"), body...))
+	return body
+}
+
+type geminiUsage struct {
+	PromptTokenCount        int `json:"promptTokenCount"`
+	CandidatesTokenCount    int `json:"candidatesTokenCount"`
+	CachedContentTokenCount int `json:"cachedContentTokenCount"`
+	ThoughtsTokenCount      int `json:"thoughtsTokenCount"`
+}
+
+func applyGemini(c *Call, u geminiUsage) {
+	if u.PromptTokenCount == 0 && u.CandidatesTokenCount == 0 {
+		return
+	}
+	// cached is a subset of prompt; thoughts bill as output
+	c.Usage.Input = u.PromptTokenCount - u.CachedContentTokenCount
+	c.Usage.CacheRead = u.CachedContentTokenCount
+	c.Usage.Output = u.CandidatesTokenCount + u.ThoughtsTokenCount
+}
+
+type geminiResp struct {
+	UsageMetadata geminiUsage `json:"usageMetadata"`
+	ModelVersion  string      `json:"modelVersion"`
+	Candidates    []struct {
+		FinishReason string `json:"finishReason"`
+	} `json:"candidates"`
+}
+
+func applyGeminiResp(c *Call, r geminiResp) {
+	applyGemini(c, r.UsageMetadata)
+	if len(r.Candidates) > 0 && r.Candidates[0].FinishReason != "" {
+		c.StopReason = r.Candidates[0].FinishReason
+	}
+	if r.ModelVersion != "" {
+		c.Model = r.ModelVersion // exact version beats the alias in the path
+	}
+}
+
 // ---- response parsing ----
 
 type anthropicUsage struct {
@@ -291,6 +398,18 @@ func applyOpenAI(c *Call, u openaiUsage) {
 // ParseResponse consumes a complete (non-stream) body.
 func ParseResponse(c *Call, body []byte) {
 	switch c.Provider {
+	case Gemini:
+		var one geminiResp
+		if json.Unmarshal(body, &one) == nil && (one.UsageMetadata.PromptTokenCount > 0 || len(one.Candidates) > 0) {
+			applyGeminiResp(c, one)
+			return
+		}
+		var arr []geminiResp // streamGenerateContent without alt=sse returns a JSON array
+		if json.Unmarshal(body, &arr) == nil {
+			for _, r := range arr {
+				applyGeminiResp(c, r) // usage is cumulative; last wins
+			}
+		}
 	case Anthropic:
 		var r struct {
 			Usage      anthropicUsage `json:"usage"`
@@ -339,6 +458,11 @@ func ParseSSE(c *Call, body []byte) {
 			continue
 		}
 		switch c.Provider {
+		case Gemini:
+			var r geminiResp
+			if json.Unmarshal(data, &r) == nil {
+				applyGeminiResp(c, r)
+			}
 		case Anthropic:
 			var ev struct {
 				Type    string `json:"type"`

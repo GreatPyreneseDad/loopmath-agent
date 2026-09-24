@@ -1,6 +1,6 @@
 {
   "name": "loopmath-agent",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Local proxy that meters Anthropic/OpenAI calls and emits loop-cost findings (context growth, missed caching, runaway loops). Prompts never leave the machine. Includes an MCP server: `npx loopmath-agent mcp`.",
   "bin": { "loopmath-agent": "bin/loopmath-agent.js" },
   "files": ["bin", "README.md"],

@@ -24,7 +24,9 @@ the membrane between the hot path (this agent, Go) and the cold path
 | `provider` | string | `anthropic` \| `openai` \| extra-upstream name |
 | `model` | string | most recent model in the loop |
 | `calls` | int | calls in the loop so far |
-| `loop_usd` | float | cumulative priced cost (0 for unknown models) |
+| `loop_usd` | float | cumulative list-price cost (0 for unknown models). When `billing` is `subscription` this is a counterfactual, not an invoice |
+| `billing` | `api` \| `subscription` | how to read the dollar fields |
+| `alt_model` | string | `model_price_swap` only |
 | `loop_tokens` | int | input + output + cache_read + cache_write |
 | `loop_seconds` | float | first call → this call |
 | `evidence` | object<string,float> | kind-specific; keys are stable |
@@ -75,6 +77,15 @@ Identical canonical request body (stream flags removed) seen
 ### `error_burst`
 ≥ 3 upstream responses with status ≥ 400 in one loop. Evidence: `errors`,
 `last_status`. Re-fires every 3.
+
+### `model_price_swap`
+Fires at ≥5 calls when cache reads are ≥25% of loop cost and a same-family
+model (`cost.Family`: claude-fable, claude-opus, claude-sonnet, gpt-5, gemini-3.8-flash, …)
+has a lower cache-read price with input and output prices no higher. Recomputes the
+whole loop at the alternative's prices from the observed token counts.
+Fields: `alt_model`. Evidence: `cache_read_share`, `current_cache_read_per_mtok`,
+`alt_cache_read_per_mtok`, `alt_loop_usd`, `saving_pct`. Savings: `loop_usd − alt_loop_usd`.
+Requires ≥10% saving. Re-evaluates at each doubling of calls.
 
 ### `unknown_price`
 Model matched nothing in the price table. `loop_usd` is understated. Fires

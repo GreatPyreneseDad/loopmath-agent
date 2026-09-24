@@ -25,6 +25,7 @@ import (
 const protocolVersion = "2025-06-18"
 
 type Server struct {
+	adminTok  string
 	adminURL  string
 	proxyAddr string
 	adminAddr string
@@ -36,7 +37,7 @@ type Server struct {
 }
 
 func New(adminURL, proxyAddr, adminAddr, self, version string) *Server {
-	return &Server{adminURL: strings.TrimSuffix(adminURL, "/"), proxyAddr: proxyAddr, adminAddr: adminAddr, self: self, version: version,
+	return &Server{adminTok: os.Getenv("LOOPMATH_ADMIN_TOKEN"), adminURL: strings.TrimSuffix(adminURL, "/"), proxyAddr: proxyAddr, adminAddr: adminAddr, self: self, version: version,
 		client: &http.Client{Timeout: 5 * time.Second}, in: os.Stdin, out: os.Stdout}
 }
 
@@ -161,7 +162,11 @@ func (s *Server) handle(ctx context.Context, req rpcReq) {
 }
 
 func (s *Server) get(path string) ([]byte, error) {
-	resp, err := s.client.Get(s.adminURL + path)
+	req, _ := http.NewRequest(http.MethodGet, s.adminURL+path, nil)
+	if s.adminTok != "" {
+		req.Header.Set("X-Loopmath-Token", s.adminTok)
+	}
+	resp, err := s.client.Do(req)
 	if err != nil {
 		return nil, err
 	}

@@ -86,6 +86,15 @@ Stdlib-only protobuf decoding (`internal/otlp/pb.go`, ~300 lines) — no
 generated code, no dependency. Validated against the real
 `opentelemetry-exporter-otlp-proto-http` Python SDK.
 
+## Production / serverless / someone else's system
+
+Run it on a $5 host with two tokens; point Supabase Edge, Vercel, Lambda at
+`https://<host>/t/<proxy-token>`; add `/l/<item-id>` to the base URL (or an
+`X-Loopmath-Loop` header) so each pipeline item is a loop. Anthropic, OpenAI,
+Gemini, xAI/any OpenAI-compatible via `-extra`. Admin under `/_loopmath/`
+behind its own token. Full procedure in [`site/agent.md` §3c](site/agent.md);
+recipes in [`deploy/`](deploy/) (Fly, Railway, Docker).
+
 ## What it sees, what it keeps, what it sends
 
 | Stage | Data | Retained? |
@@ -112,6 +121,7 @@ JSON Schema in [`docs/findings.schema.json`](docs/findings.schema.json).
 | `runaway_loop` | calls ≥ 50 or USD ≥ 25; re-fires at each doubling | `calls`, `usd`, `level`, `dominant_call_index`, `dominant_call_usd` |
 | `retry_storm` | the identical request body sent ≥3× in one loop | `identical_requests`, `last_status` |
 | `error_burst` | ≥3 upstream 4xx/5xx in one loop | `errors`, `last_status` |
+| `model_price_swap` | cache reads ≥25% of loop cost and a same-family model reads cache cheaper | `cache_read_share`, `alt_loop_usd`, `saving_pct` (+ `alt_model` field) |
 | `unknown_price` | model not in price table (USD is understated) | — |
 
 Every finding carries `loop_id`, `loop_key_kind`, `provider`, `model`, `calls`,

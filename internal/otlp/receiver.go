@@ -15,6 +15,7 @@ package otlp
 import (
 	"compress/gzip"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"io"
@@ -32,6 +33,7 @@ import (
 const maxBody = 64 << 20
 
 type Receiver struct {
+	token  string // optional: X-Loopmath-Token (set OTEL_EXPORTER_OTLP_HEADERS=X-Loopmath-Token=...)
 	engine *loop.Engine
 	mu     sync.Mutex
 	spans  int
@@ -40,6 +42,9 @@ type Receiver struct {
 }
 
 func New(engine *loop.Engine) *Receiver { return &Receiver{engine: engine} }
+
+// WithToken requires X-Loopmath-Token on POST /v1/traces.
+func (r *Receiver) WithToken(t string) *Receiver { r.token = t; return r }
 
 func (r *Receiver) Stats() (spans, calls, dropped int) {
 	r.mu.Lock()
@@ -54,6 +59,10 @@ func (r *Receiver) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 		http.Error(w, "POST /v1/traces", http.StatusNotFound)
+		return
+	}
+	if r.token != "" && subtle.ConstantTimeCompare([]byte(r.token), []byte(req.Header.Get("X-Loopmath-Token"))) != 1 {
+		http.Error(w, "loopmath: token required (OTEL_EXPORTER_OTLP_HEADERS=X-Loopmath-Token=...)", http.StatusUnauthorized)
 		return
 	}
 	var body io.Reader = io.LimitReader(req.Body, maxBody+1)
