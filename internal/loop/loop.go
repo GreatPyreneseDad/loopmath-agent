@@ -192,7 +192,7 @@ func (e *Engine) base(l *Loop, c *meter.Call, kind findings.Kind, sev findings.S
 	}
 }
 
-var Version = "0.2.0"
+var Version = "0.2.1"
 
 func round(f float64) float64 { return math.Round(f*1e4) / 1e4 }
 

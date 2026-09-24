@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -63,10 +64,25 @@ func main() {
 	rcv := otlp.New(engine).WithToken(cfg.ProxyToken)
 	adm := api.New(engine, emit, price, px, rcv, cfg.AdminToken)
 
+	// MCP over HTTP: the same tools as `loopmath-agent mcp`, served by this process.
+	// Thin client over our own admin API (loopback), so behavior is identical.
+	selfAdmin := "http://127.0.0.1" + portOf(cfg.AdminAddr)
+	if cfg.Single {
+		selfAdmin = "http://127.0.0.1" + portOf(cfg.ProxyAddr) + "/_loopmath"
+	}
+	os.Setenv("LOOPMATH_ADMIN_TOKEN", cfg.AdminToken)
+	mcpSrv := mcp.New(selfAdmin, cfg.ProxyAddr, cfg.AdminAddr, "", loop.Version)
+	if cfg.PublicURL != "" {
+		mcpSrv.Hosted(cfg.PublicURL, cfg.ProxyToken)
+	}
+	mcpHTTP := mcp.HTTPHandler{S: mcpSrv, Token: cfg.AdminToken}
+
 	var front http.Handler = px
 	if cfg.Single {
 		// One port for PaaS: /_loopmath/* → admin, /v1/traces → otlp, everything else → proxy
 		mux := http.NewServeMux()
+		mux.Handle("/_loopmath/mcp", mcpHTTP)
+		mux.Handle("/_loopmath/mcp/", mcpHTTP)
 		mux.Handle("/_loopmath/", http.StripPrefix("/_loopmath", adm))
 		mux.Handle("/v1/traces", rcv)
 		mux.Handle("/", px)
@@ -76,7 +92,11 @@ func main() {
 		}
 	}
 	proxySrv := &http.Server{Addr: cfg.ProxyAddr, Handler: front, ReadHeaderTimeout: 30 * time.Second}
-	adminSrv := &http.Server{Addr: cfg.AdminAddr, Handler: adm, ReadHeaderTimeout: 10 * time.Second}
+	adminMux := http.NewServeMux()
+	adminMux.Handle("/mcp", mcpHTTP)
+	adminMux.Handle("/mcp/", mcpHTTP)
+	adminMux.Handle("/", adm)
+	adminSrv := &http.Server{Addr: cfg.AdminAddr, Handler: adminMux, ReadHeaderTimeout: 10 * time.Second}
 
 	go func() {
 		log.Printf("loopmath-agent %s: proxy on %s (anthropic→%s, openai→%s, gemini→%s) billing=%s", loop.Version, cfg.ProxyAddr, cfg.AnthropicUpstream, cfg.OpenAIUpstream, cfg.GeminiUpstream, cfg.Billing)
@@ -88,10 +108,10 @@ func main() {
 		}
 	}()
 	if cfg.Single {
-		log.Printf("single-port mode: admin at %s/_loopmath/ (v1/findings, v1/loops, metrics), otlp at %s/v1/traces", cfg.ProxyAddr, cfg.ProxyAddr)
+		log.Printf("single-port mode: admin at %s/_loopmath/ (v1/findings, v1/loops, metrics), MCP at %s/_loopmath/mcp, otlp at %s/v1/traces", cfg.ProxyAddr, cfg.ProxyAddr, cfg.ProxyAddr)
 	} else {
 		go func() {
-			log.Printf("admin on %s: /v1/findings /v1/loops /metrics", cfg.AdminAddr)
+			log.Printf("admin on %s: /v1/findings /v1/loops /metrics, MCP over HTTP at /mcp", cfg.AdminAddr)
 			if err := adminSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 				log.Fatal(err)
 			}
@@ -138,6 +158,14 @@ func runMCP(args []string) {
 	if err := srv.Run(context.Background()); err != nil {
 		log.Fatal(err)
 	}
+}
+
+// portOf(":8080") == ":8080"; portOf("0.0.0.0:8080") == ":8080"
+func portOf(addr string) string {
+	if i := strings.LastIndex(addr, ":"); i >= 0 {
+		return addr[i:]
+	}
+	return addr
 }
 
 func envOr(k, d string) string {

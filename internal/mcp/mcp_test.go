@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 )
@@ -93,5 +95,64 @@ func TestNotRunningGuidesToStart(t *testing.T) {
 	resps := run(t, s, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"loopmath_findings","arguments":{}}}`)
 	if !strings.Contains(text(resps[0]), "loopmath_start") {
 		t.Fatalf("should point at loopmath_start: %s", text(resps[0]))
+	}
+}
+
+func TestHTTPTransport(t *testing.T) {
+	admin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Loopmath-Token") != "adm" {
+			http.Error(w, "no token", 401)
+			return
+		}
+		switch r.URL.Path {
+		case "/healthz":
+			w.Write([]byte("ok"))
+		case "/metrics":
+			w.Write([]byte("loopmath_loops 2\n"))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer admin.Close()
+	os.Setenv("LOOPMATH_ADMIN_TOKEN", "adm")
+	defer os.Unsetenv("LOOPMATH_ADMIN_TOKEN")
+	s := New(admin.URL, ":8080", ":8080", "", "test").Hosted("https://loopmath-x.fly.dev", "ptok")
+	h := httptest.NewServer(HTTPHandler{S: s, Token: "adm"})
+	defer h.Close()
+
+	post := func(url, body string, hdr map[string]string) (int, string, http.Header) {
+		req, _ := http.NewRequest("POST", url, strings.NewReader(body))
+		for k, v := range hdr {
+			req.Header.Set(k, v)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(resp.Body)
+		return resp.StatusCode, string(b), resp.Header
+	}
+	if st, _, _ := post(h.URL+"/mcp", `{"jsonrpc":"2.0","id":1,"method":"ping"}`, nil); st != 401 {
+		t.Fatalf("no token should 401, got %d", st)
+	}
+	st, body, hdr := post(h.URL+"/mcp/t/adm", `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`, nil)
+	if st != 200 || hdr.Get("Mcp-Session-Id") == "" || !strings.Contains(body, protocolVersion) {
+		t.Fatalf("initialize via path token: %d %s %v", st, body, hdr)
+	}
+	if st, _, _ := post(h.URL+"/mcp", `{"jsonrpc":"2.0","method":"notifications/initialized"}`, map[string]string{"Authorization": "Bearer adm"}); st != 202 {
+		t.Fatalf("notification should 202, got %d", st)
+	}
+	_, body, _ = post(h.URL+"/mcp", `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"loopmath_setup_env","arguments":{}}}`, map[string]string{"X-Loopmath-Token": "adm"})
+	if !strings.Contains(body, "https://loopmath-x.fly.dev/t/ptok") || strings.Contains(body, "localhost") {
+		t.Fatalf("hosted env block wrong: %s", body)
+	}
+	_, body, _ = post(h.URL+"/mcp/t/adm", `[{"jsonrpc":"2.0","id":3,"method":"ping"},{"jsonrpc":"2.0","id":4,"method":"tools/list"}]`, nil)
+	var arr []any
+	if json.Unmarshal([]byte(body), &arr) != nil || len(arr) != 2 {
+		t.Fatalf("batch: %s", body)
+	}
+	if st, _, _ := post(h.URL+"/mcp/t/adm", `{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"loopmath_status","arguments":{}}}`, nil); st != 200 {
+		t.Fatalf("status call %d", st)
 	}
 }

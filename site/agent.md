@@ -152,7 +152,7 @@ would do (`model_price_swap`).
 ```sh
 curl -H "Authorization: Bearer <admin-token>" https://<host>/_loopmath/v1/findings
 ```
-MCP against a remote agent: `LOOPMATH_ADMIN_URL=https://<host>/_loopmath LOOPMATH_ADMIN_TOKEN=<admin-token> loopmath-agent mcp`.
+MCP against a remote agent, two ways: (a) **remote connector** — the instance serves MCP over Streamable HTTP at `https://<host>/_loopmath/mcp` (auth: `Authorization: Bearer <admin-token>`, or `/_loopmath/mcp/t/<admin-token>` for clients that only take a URL — Cowork, claude.ai custom connectors); (b) local stdio bridge — `LOOPMATH_ADMIN_URL=https://<host>/_loopmath LOOPMATH_ADMIN_TOKEN=<admin-token> loopmath-agent mcp`. On a hosted instance `loopmath_setup_env` returns the public URL + proxy token, never localhost (`-public-url`, auto on Fly/Railway).
 
 **Subscription / seat billing** (Claude Max, Copilot seats, enterprise seat plans): run with
 `-billing subscription`. Dollar fields are then labeled as list-price counterfactuals — what

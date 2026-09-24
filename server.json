@@ -3,12 +3,12 @@
   "name": "io.github.GreatPyreneseDad/loopmath-agent",
   "description": "Meter Anthropic/OpenAI calls through a local proxy and get loop-cost findings: context growth, missed prompt caching, redundant context, runaway loops, retry storms. Prompts never leave the machine.",
   "repository": { "url": "https://github.com/GreatPyreneseDad/loopmath-agent", "source": "github" },
-  "version": "0.2.0",
+  "version": "0.2.1",
   "packages": [
     {
       "registry_type": "npm",
       "identifier": "loopmath-agent",
-      "version": "0.2.0",
+      "version": "0.2.1",
       "transport": { "type": "stdio" },
       "package_arguments": [{ "type": "positional", "value": "mcp" }],
       "environment_variables": [

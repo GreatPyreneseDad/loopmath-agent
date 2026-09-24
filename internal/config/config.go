@@ -24,7 +24,8 @@ type Config struct {
 	Single     bool   // serve proxy + admin (/_loopmath/*) + otlp (/v1/traces) on ProxyAddr only
 	ProxyToken string // required on every proxied request: X-Loopmath-Token header or /t/<token>/ path prefix
 	AdminToken string // required on admin endpoints (Authorization: Bearer or X-Loopmath-Token)
-	Billing    string // api | subscription — labels dollars as invoice vs list-price counterfactual
+	Billing    string // api | subscription
+	PublicURL  string // https://host — what remote MCP clients should tell the application to use as base URL — labels dollars as invoice vs list-price counterfactual
 
 	// Upstreams
 	AnthropicUpstream string
@@ -116,6 +117,7 @@ func Load(args []string) (*Config, error) {
 	fs.BoolVar(&c.Single, "single", os.Getenv("LOOPMATH_SINGLE") == "1" || os.Getenv("PORT") != "", "single port: proxy + /_loopmath/* admin + /v1/traces on -proxy (auto when $PORT is set)")
 	fs.StringVar(&c.ProxyToken, "proxy-token", env("LOOPMATH_PROXY_TOKEN", ""), "require this token on proxied requests (X-Loopmath-Token or /t/<token>/ prefix)")
 	fs.StringVar(&c.AdminToken, "admin-token", env("LOOPMATH_ADMIN_TOKEN", ""), "require this token on admin endpoints")
+	fs.StringVar(&c.PublicURL, "public-url", env("LOOPMATH_PUBLIC_URL", envFly()), "public https URL of this agent (for loopmath_setup_env on hosted instances)")
 	fs.StringVar(&c.Billing, "billing", env("LOOPMATH_BILLING", "api"), "api|subscription — how to label dollars in findings")
 	var extra string
 	fs.StringVar(&extra, "extra", env("LOOPMATH_EXTRA_UPSTREAMS", ""), "extra upstreams: name=url,name=url (served at /name/...)")
@@ -161,4 +163,15 @@ func Load(args []string) (*Config, error) {
 		}
 	}
 	return c, nil
+}
+
+// envFly derives a public URL on Fly.io when FLY_APP_NAME is present.
+func envFly() string {
+	if app := os.Getenv("FLY_APP_NAME"); app != "" {
+		return "https://" + app + ".fly.dev"
+	}
+	if d := os.Getenv("RAILWAY_PUBLIC_DOMAIN"); d != "" {
+		return "https://" + d
+	}
+	return ""
 }

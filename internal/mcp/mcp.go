@@ -10,7 +10,11 @@ package mcp
 
 import (
 	"bufio"
+	"bytes"
 	"context"
+	"crypto/rand"
+	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -25,6 +29,8 @@ import (
 const protocolVersion = "2025-06-18"
 
 type Server struct {
+	publicURL string // hosted instance: base for setup_env
+	proxyTok  string
 	adminTok  string
 	adminURL  string
 	proxyAddr string
@@ -34,6 +40,13 @@ type Server struct {
 	client    *http.Client
 	in        io.Reader
 	out       io.Writer
+}
+
+// Hosted configures setup_env for a remote instance: the app should use
+// publicURL (+ /t/<proxyTok>) instead of localhost.
+func (s *Server) Hosted(publicURL, proxyTok string) *Server {
+	s.publicURL, s.proxyTok = strings.TrimSuffix(publicURL, "/"), proxyTok
+	return s
 }
 
 func New(adminURL, proxyAddr, adminAddr, self, version string) *Server {
@@ -126,22 +139,36 @@ func (s *Server) Run(ctx context.Context) error {
 }
 
 func (s *Server) handle(ctx context.Context, req rpcReq) {
+	if resp := s.dispatch(ctx, req); resp != nil {
+		s.write(resp)
+	}
+}
+
+func ok(id json.RawMessage, result any) *rpcResp {
+	return &rpcResp{JSONRPC: "2.0", ID: id, Result: result}
+}
+func bad(id json.RawMessage, code int, msg string) *rpcResp {
+	return &rpcResp{JSONRPC: "2.0", ID: id, Error: &rpcErr{Code: code, Message: msg}}
+}
+
+// dispatch is transport-agnostic: stdio and Streamable HTTP both use it.
+func (s *Server) dispatch(ctx context.Context, req rpcReq) *rpcResp {
 	switch req.Method {
 	case "initialize":
-		s.reply(req.ID, map[string]any{
+		return ok(req.ID, map[string]any{
 			"protocolVersion": protocolVersion,
 			"capabilities":    map[string]any{"tools": map[string]any{}},
 			"serverInfo":      map[string]any{"name": "loopmath-agent", "version": s.version},
-			"instructions": "loopmath-agent meters every Anthropic/OpenAI call your application makes through a local proxy and emits loop-cost findings (context growth, missed prompt caching, redundant context, runaway loops, retry storms). " +
-				"Typical flow: loopmath_status → loopmath_start if not running → loopmath_setup_env and apply the env vars to the application → run the workload → loopmath_findings. " +
-				"Findings contain numbers and hashes only; no prompt text leaves the machine. Docs: https://gitdr.ai/agent.md",
+			"instructions": "loopmath-agent meters every Anthropic/OpenAI/Gemini call an application makes through a proxy and emits loop-cost findings (context growth, missed prompt caching, redundant context, runaway loops, retry storms, cheaper same-family model). " +
+				"Typical flow: loopmath_status → loopmath_start if not running → loopmath_setup_env and apply the env vars to the application → run the workload → loopmath_findings, then turn each recommendation into a change. " +
+				"Findings contain numbers and hashes only; no prompt text leaves the host. Docs: https://gitdr.ai/agent.md",
 		})
-	case "notifications/initialized", "notifications/cancelled":
-		// no response to notifications
+	case "notifications/initialized", "notifications/cancelled", "notifications/progress":
+		return nil
 	case "ping":
-		s.reply(req.ID, map[string]any{})
+		return ok(req.ID, map[string]any{})
 	case "tools/list":
-		s.reply(req.ID, map[string]any{"tools": s.tools()})
+		return ok(req.ID, map[string]any{"tools": s.tools()})
 	case "tools/call":
 		var p struct {
 			Name string          `json:"name"`
@@ -149,16 +176,108 @@ func (s *Server) handle(ctx context.Context, req rpcReq) {
 		}
 		json.Unmarshal(req.Params, &p)
 		text, isErr := s.call(ctx, p.Name, p.Args)
-		s.reply(req.ID, map[string]any{"content": []map[string]any{{"type": "text", "text": text}}, "isError": isErr})
+		return ok(req.ID, map[string]any{"content": []map[string]any{{"type": "text", "text": text}}, "isError": isErr})
 	case "resources/list":
-		s.reply(req.ID, map[string]any{"resources": []any{}})
+		return ok(req.ID, map[string]any{"resources": []any{}})
 	case "prompts/list":
-		s.reply(req.ID, map[string]any{"prompts": []any{}})
-	default:
-		if req.ID != nil {
-			s.fail(req.ID, -32601, "method not found: "+req.Method)
+		return ok(req.ID, map[string]any{"prompts": []any{}})
+	}
+	if req.ID != nil {
+		return bad(req.ID, -32601, "method not found: "+req.Method)
+	}
+	return nil
+}
+
+// ServeHTTP implements MCP Streamable HTTP (2025-03-26+): POST carries one
+// JSON-RPC message or a batch; the reply is application/json. GET (server
+// push stream) is not offered — nothing here is server-initiated. Auth is the
+// admin token, as a Bearer header, X-Loopmath-Token, or a /t/<token> path
+// segment for clients that only accept a URL (Cowork custom connectors).
+type HTTPHandler struct {
+	S     *Server
+	Token string
+}
+
+func (h HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if h.Token != "" {
+		got := r.Header.Get("X-Loopmath-Token")
+		if got == "" {
+			got = strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		}
+		if got == "" {
+			// .../mcp/t/<token>
+			if i := strings.Index(r.URL.Path, "/t/"); i >= 0 {
+				got = strings.Trim(r.URL.Path[i+3:], "/")
+			}
+		}
+		if subtle.ConstantTimeCompare([]byte(h.Token), []byte(got)) != 1 {
+			w.Header().Set("WWW-Authenticate", "Bearer")
+			http.Error(w, "loopmath: token required", http.StatusUnauthorized)
+			return
 		}
 	}
+	switch r.Method {
+	case http.MethodGet:
+		http.Error(w, "loopmath MCP: use POST (no server-initiated stream)", http.StatusMethodNotAllowed)
+		return
+	case http.MethodDelete:
+		w.WriteHeader(http.StatusNoContent) // stateless; nothing to end
+		return
+	case http.MethodPost:
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	body, err := io.ReadAll(io.LimitReader(r.Body, 4<<20))
+	if err != nil {
+		http.Error(w, "read", http.StatusBadRequest)
+		return
+	}
+	body = bytes.TrimSpace(body)
+	var msgs []rpcReq
+	batch := len(body) > 0 && body[0] == '['
+	if batch {
+		if err := json.Unmarshal(body, &msgs); err != nil {
+			writeRPC(w, []any{bad(nil, -32700, "parse error")}, false)
+			return
+		}
+	} else {
+		var one rpcReq
+		if err := json.Unmarshal(body, &one); err != nil {
+			writeRPC(w, bad(nil, -32700, "parse error"), false)
+			return
+		}
+		msgs = []rpcReq{one}
+	}
+	var out []any
+	for _, m := range msgs {
+		if m.Method == "initialize" {
+			w.Header().Set("Mcp-Session-Id", newSessionID())
+		}
+		if resp := h.S.dispatch(r.Context(), m); resp != nil {
+			out = append(out, resp)
+		}
+	}
+	if len(out) == 0 { // notifications only
+		w.WriteHeader(http.StatusAccepted)
+		return
+	}
+	if batch {
+		writeRPC(w, out, true)
+		return
+	}
+	writeRPC(w, out[0], false)
+}
+
+func writeRPC(w http.ResponseWriter, v any, _ bool) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(v)
+}
+
+func newSessionID() string {
+	var b [12]byte
+	rand.Read(b[:])
+	return hex.EncodeToString(b[:])
 }
 
 func (s *Server) get(path string) ([]byte, error) {
@@ -192,6 +311,9 @@ func otlpHost(proxyHost string) string {
 }
 
 func (s *Server) envBlock() string {
+	if s.publicURL != "" {
+		return s.hostedEnvBlock()
+	}
 	host := s.proxyAddr
 	if strings.HasPrefix(host, ":") {
 		host = "localhost" + host
@@ -218,6 +340,27 @@ No-proxy alternative: if the app already emits OpenTelemetry GenAI spans (OpenLL
 instead of changing base URLs. Same loops, same findings.
 Admin API: %s  (findings: /v1/findings, loops: /v1/loops, metrics: /metrics)`,
 		base, base, base, base, base, base, base, base, otlpHost(host), s.adminURL)
+}
+
+func (s *Server) hostedEnvBlock() string {
+	base := s.publicURL
+	if s.proxyTok != "" {
+		base += "/t/" + s.proxyTok
+	}
+	return fmt.Sprintf(`This loopmath instance is hosted at %s. Set in the APPLICATION's environment (Supabase: supabase secrets set; Vercel: project env; Fly/Railway: service vars):
+
+  LOOPMATH_URL=%s
+  ANTHROPIC_BASE_URL=$LOOPMATH_URL
+  OPENAI_BASE_URL=$LOOPMATH_URL/openai
+  # Gemini SDKs: httpOptions.baseUrl / api_endpoint = $LOOPMATH_URL   (routed by path)
+  # xAI / other OpenAI-compatible: $LOOPMATH_URL/<extra-name>/v1
+
+Per-item / per-job loops (recommended for pipelines): append /l/<item-id> to the base URL when constructing the client,
+or send header  X-Loopmath-Loop: <item-id>  on each request. Without this, items sharing a system prompt blur into one loop.
+
+API keys are unchanged; the proxy forwards them and stores nothing. Only findings (numbers) are retained.
+Verify: process a few items, then call loopmath_loops — expect one loop per item.
+Admin API: %s/_loopmath  (this MCP endpoint: %s/_loopmath/mcp)`, s.publicURL, base, s.publicURL, s.publicURL)
 }
 
 func (s *Server) call(ctx context.Context, name string, args json.RawMessage) (string, bool) {

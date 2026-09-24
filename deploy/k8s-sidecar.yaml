@@ -15,7 +15,7 @@ spec:
             - { name: ANTHROPIC_BASE_URL, value: "http://localhost:8787" }
             - { name: OPENAI_BASE_URL,    value: "http://localhost:8787/openai" }
         - name: loopmath-agent
-          image: loopmath-agent:0.2.0
+          image: loopmath-agent:0.2.1
           ports: [{ containerPort: 8787 }, { containerPort: 8788 }, { containerPort: 4318 }]
           env:
             - { name: LOOPMATH_ADMIN_ADDR, value: ":8788" }

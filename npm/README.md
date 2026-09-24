@@ -33,6 +33,18 @@ Then: *"check loopmath and fix whatever it finds."* Tools exposed:
 `loopmath_loops`, `loopmath_loop`. Claude Code plugin in [`plugin/`](plugin/),
 Cursor rule in [`cursor/`](cursor/), MCP registry manifest in [`server.json`](server.json).
 
+### In Cowork / claude.ai: one connector URL
+
+A running instance serves MCP over HTTP at `/_loopmath/mcp`. Add it as a
+custom connector with the admin token in the URL — no OAuth, no local install:
+
+```
+https://loopmath-<name>.fly.dev/_loopmath/mcp/t/<admin-token>
+```
+
+Then: *"use my loopmath connector — check status, set up env for my app, and after I run it tell me what to change."*
+See [`site/cowork.md`](site/cowork.md).
+
 ## Install (humans)
 
 Download a binary from [Releases](https://github.com/GreatPyreneseDad/loopmath-agent/releases) (linux/darwin/windows, amd64/arm64), or:

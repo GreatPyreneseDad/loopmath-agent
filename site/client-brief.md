@@ -36,6 +36,10 @@ and only if a sink is configured. Full reference: https://gitdr.ai/agent.md §3c
    each call. Without this, every item's calls blur into one loop and the
    per-item number is lost. Use the intake record's primary key.
 
+3b. **Hand the owner a connector.** `https://loopmath-<client>.fly.dev/_loopmath/mcp/t/<admin-token>` added as a
+   custom connector in Cowork or claude.ai gives their Claude the loopmath tools directly — status, loops, findings,
+   setup instructions — with no install. Treat the URL as a secret.
+
 4. **Verify.** Process a few items, then:
    ```sh
    curl -H "Authorization: Bearer <admin-token>" https://loopmath-<client>.fly.dev/_loopmath/v1/loops
