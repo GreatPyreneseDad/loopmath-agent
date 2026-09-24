@@ -18,9 +18,6 @@ dockers:
   - image_templates: ["ghcr.io/greatpyrenesedad/loopmath-agent:{{ .Version }}", "ghcr.io/greatpyrenesedad/loopmath-agent:latest"]
     dockerfile: Dockerfile.goreleaser
     build_flag_templates: ["--platform=linux/amd64"]
-brews:
-  - repository: { owner: GreatPyreneseDad, name: homebrew-tap }
-    homepage: https://gitdr.ai/agent.md
-    description: "Local proxy that meters model calls and emits loop-cost findings"
+# brews: enable after creating GreatPyreneseDad/homebrew-tap and HOMEBREW_TAP_TOKEN
 release:
   github: { owner: GreatPyreneseDad, name: loopmath-agent }

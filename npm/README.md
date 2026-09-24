@@ -196,4 +196,4 @@ make docker
 
 ## License
 
-TBD — MacGregor Holding Company / ROSE Corp.
+Source-available for evaluation; license selection pending. See LICENSE.
