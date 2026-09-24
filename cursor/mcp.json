@@ -1,0 +1,1 @@
+{ "mcpServers": { "loopmath": { "command": "npx", "args": ["-y", "loopmath-agent", "mcp"] } } }

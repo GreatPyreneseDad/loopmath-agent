@@ -1,0 +1,15 @@
+{
+  "name": "loopmath-agent",
+  "version": "0.1.0",
+  "description": "Local proxy that meters Anthropic/OpenAI calls and emits loop-cost findings (context growth, missed caching, runaway loops). Prompts never leave the machine. Includes an MCP server: `npx loopmath-agent mcp`.",
+  "bin": { "loopmath-agent": "bin/loopmath-agent.js" },
+  "files": ["bin", "README.md"],
+  "scripts": { "postinstall": "node bin/loopmath-agent.js --download-only" },
+  "keywords": ["mcp", "mcp-server", "anthropic", "openai", "claude-code", "cursor", "token-cost", "prompt-caching", "finops", "agents", "observability", "proxy"],
+  "homepage": "https://gitdr.ai/agent.md",
+  "repository": { "type": "git", "url": "https://github.com/GreatPyreneseDad/loopmath-agent" },
+  "license": "SEE LICENSE IN LICENSE",
+  "engines": { "node": ">=18" },
+  "os": ["darwin", "linux", "win32"],
+  "cpu": ["x64", "arm64"]
+}

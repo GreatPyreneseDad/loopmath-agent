@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gitdr.ai/schemas/loopmath.findings/v1.json",
+  "title": "loopmath.findings/v1",
+  "type": "object",
+  "required": ["schema", "findings"],
+  "properties": {
+    "schema": { "const": "loopmath.findings/v1" },
+    "findings": { "type": "array", "items": { "$ref": "#/$defs/finding" } }
+  },
+  "$defs": {
+    "finding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "id", "at", "kind", "severity", "loop_id", "loop_key_kind", "provider", "model", "calls", "loop_usd", "loop_tokens", "loop_seconds", "evidence", "est_savings_usd", "recommendation", "agent"],
+      "properties": {
+        "schema": { "const": "loopmath.findings/v1" },
+        "id": { "type": "string" },
+        "at": { "type": "string", "format": "date-time" },
+        "kind": { "enum": ["context_growth", "low_cache_rate", "redundant_context", "runaway_loop", "retry_storm", "error_burst", "unknown_price"] },
+        "severity": { "enum": ["info", "warn", "high"] },
+        "loop_id": { "type": "string" },
+        "loop_key_kind": { "enum": ["header", "body", "fingerprint"] },
+        "provider": { "type": "string" },
+        "model": { "type": "string" },
+        "calls": { "type": "integer", "minimum": 1 },
+        "loop_usd": { "type": "number", "minimum": 0 },
+        "loop_tokens": { "type": "integer", "minimum": 0 },
+        "loop_seconds": { "type": "number", "minimum": 0 },
+        "evidence": { "type": "object", "additionalProperties": { "type": "number" } },
+        "est_savings_usd": { "type": "number", "minimum": 0 },
+        "recommendation": { "type": "string", "maxLength": 400 },
+        "agent": { "type": "string", "pattern": "^loopmath-agent/" }
+      }
+    }
+  }
+}

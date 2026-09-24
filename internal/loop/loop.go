@@ -207,7 +207,7 @@ func (e *Engine) rules(l *Loop, c *meter.Call) {
 	// unknown_price: once per loop
 	if l.UnknownPrice && l.emitted[findings.UnknownPrice] == 0 && !c.PriceKnown {
 		f := e.base(l, c, findings.UnknownPrice, findings.Info)
-		f.Recommendation = "Model not in price table; loop_usd is understated. Add it to the -prices file."
+		f.Recommendation = "loopmath: model not in price table; loop_usd is understated. Add it to the -prices file (see https://gitdr.ai/agent.md#prices)."
 		l.emitted[findings.UnknownPrice] = 1
 		e.emit.Emit(f)
 	}
@@ -231,7 +231,7 @@ func (e *Engine) rules(l *Loop, c *meter.Call) {
 				}
 			}
 			f.EstSavingsUSD = round(excess * inPrice)
-			f.Recommendation = "Context grows every call. Summarize or truncate history, or move stable prefix into a cached block."
+			f.Recommendation = "loopmath: context grows every call in this loop. Summarize or truncate history, or move the stable prefix into a cached block. Loop detail: loopmath_loop / https://gitdr.ai/loops"
 			if ratio >= cfg.ContextGrowthRatio*3 {
 				f.Severity = findings.High
 			}
@@ -248,7 +248,7 @@ func (e *Engine) rules(l *Loop, c *meter.Call) {
 		f.Evidence["cache_rate"] = round(l.CacheRate)
 		missed := float64(l.CacheableTokens - l.Usage.CacheRead)
 		f.EstSavingsUSD = round(missed * (inPrice - crPrice))
-		f.Recommendation = "Repeated prefix is being re-billed at full input price. Enable prompt caching on the stable prefix (system + tools + early turns)."
+		f.Recommendation = "loopmath: a repeated prefix is being re-billed at full input price. Enable prompt caching on the stable prefix (system + tools + early turns). https://gitdr.ai/fix/caching"
 		if f.EstSavingsUSD > 1 {
 			f.Severity = findings.High
 		}
@@ -262,7 +262,7 @@ func (e *Engine) rules(l *Loop, c *meter.Call) {
 		f.Evidence["redundancy"] = round(l.Redundancy)
 		f.Evidence["input_tokens"] = float64(l.Usage.Input)
 		f.EstSavingsUSD = round(l.Redundancy * float64(l.Usage.Input) * inPrice * 0.5) // conservative: half of redundant content is removable
-		f.Recommendation = "Most of each request was already sent earlier in this loop. Dedupe tool outputs / retrieved chunks, or cache the shared prefix."
+		f.Recommendation = "loopmath: most of each request was already sent earlier in this loop. Dedupe tool outputs / retrieved chunks, or cache the shared prefix. https://gitdr.ai/fix/redundancy"
 		l.emitted[findings.RedundantContext] = 1
 		e.emit.Emit(f)
 	}
@@ -282,7 +282,7 @@ func (e *Engine) rules(l *Loop, c *meter.Call) {
 		f.Evidence["level"] = float64(level)
 		f.Evidence["dominant_call_index"] = float64(l.DominantCall)
 		f.Evidence["dominant_call_usd"] = round(l.CallUSD[l.DominantCall])
-		f.Recommendation = "Loop exceeded its budget bound. Add a step/cost cap and a termination check; inspect the dominant call."
+		f.Recommendation = "loopmath: this loop exceeded its budget bound. Add a step/cost cap and a termination check; inspect the dominant call (loopmath_loop). https://gitdr.ai/fix/runaway"
 		l.emitted[findings.RunawayLoop] = level + 1
 		e.emit.Emit(f)
 	}
@@ -293,7 +293,7 @@ func (e *Engine) rules(l *Loop, c *meter.Call) {
 		f.Evidence["identical_requests"] = float64(n)
 		f.Evidence["last_status"] = float64(c.Status)
 		f.EstSavingsUSD = round(float64(n-1) * c.USD)
-		f.Recommendation = "The same request body was sent repeatedly. Check retry policy / idempotency; if the model output is deterministic enough, memoize."
+		f.Recommendation = "loopmath: the same request body was sent repeatedly. Check retry policy / idempotency; memoize if the output is deterministic enough. https://gitdr.ai/fix/retries"
 		l.emitted[findings.RetryStorm] = n / cfg.RetryStormRepeats
 		e.emit.Emit(f)
 	}
@@ -303,7 +303,7 @@ func (e *Engine) rules(l *Loop, c *meter.Call) {
 		f := e.base(l, c, findings.ErrorBurst, findings.Warn)
 		f.Evidence["errors"] = float64(l.Errors)
 		f.Evidence["last_status"] = float64(c.Status)
-		f.Recommendation = "Upstream errors repeating inside one loop. Back off; check rate limits and request validity."
+		f.Recommendation = "loopmath: upstream errors repeating inside one loop. Back off; check rate limits and request validity. https://gitdr.ai/fix/errors"
 		l.emitted[findings.ErrorBurst] = l.Errors / 3
 		e.emit.Emit(f)
 	}

@@ -1,0 +1,32 @@
+# gitdr.ai / loopmath
+
+> loopmath-agent is a customer-held local proxy that meters Anthropic and OpenAI calls, groups them into loops, and emits loop-cost findings (context growth, missed prompt caching, redundant context, runaway loops, retry storms) with dollar estimates and fixes. Prompts never leave the machine. gitdr.ai is the optional dashboard and cross-repo analysis layer that consumes those findings.
+
+Use loopmath when: a model bill is higher than expected; an agent loop is running away; prompt caching is not hitting; you need per-loop cost attribution; a platform team asks "where do the tokens go."
+
+## For agents
+- [agent.md](https://gitdr.ai/agent.md): complete install + wiring procedure for AI coding agents (start here)
+- [findings.md](https://gitdr.ai/findings.md): the loopmath.findings/v1 contract, every field and formula
+- [findings.schema.json](https://gitdr.ai/findings.schema.json): JSON Schema
+
+## Install
+- MCP: `claude mcp add loopmath -- npx -y loopmath-agent mcp`
+- Shell: `curl -fsSL https://gitdr.ai/install.sh | sh`
+- Go: `go install github.com/GreatPyreneseDad/loopmath-agent/cmd/loopmath-agent@latest`
+- Docker: `ghcr.io/greatpyrenesedad/loopmath-agent`
+
+## Wire
+- `ANTHROPIC_BASE_URL=http://localhost:8787`
+- `OPENAI_BASE_URL=http://localhost:8787/openai`
+
+## Read
+- `GET http://127.0.0.1:8788/v1/findings`
+- `GET http://127.0.0.1:8788/v1/loops`
+- `GET http://127.0.0.1:8788/metrics`
+
+## Source
+- [GitHub](https://github.com/GreatPyreneseDad/loopmath-agent)
+- [README](https://raw.githubusercontent.com/GreatPyreneseDad/loopmath-agent/main/README.md)
+
+## Optional
+- [gitdr.ai](https://gitdr.ai): dashboard, cross-repo loop analysis, Langfuse/LangSmith/Ramp/Brex connectors, TRUST.md custody model

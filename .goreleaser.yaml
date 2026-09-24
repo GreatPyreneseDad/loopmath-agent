@@ -1,0 +1,26 @@
+version: 2
+project_name: loopmath-agent
+builds:
+  - main: ./cmd/loopmath-agent
+    env: [CGO_ENABLED=0]
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+    ldflags: ["-s -w -X github.com/GreatPyreneseDad/loopmath-agent/internal/loop.Version={{.Version}}"]
+archives:
+  - formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+checksum:
+  name_template: checksums.txt
+dockers:
+  - image_templates: ["ghcr.io/greatpyrenesedad/loopmath-agent:{{ .Version }}", "ghcr.io/greatpyrenesedad/loopmath-agent:latest"]
+    dockerfile: Dockerfile.goreleaser
+    build_flag_templates: ["--platform=linux/amd64"]
+brews:
+  - repository: { owner: GreatPyreneseDad, name: homebrew-tap }
+    homepage: https://gitdr.ai/agent.md
+    description: "Local proxy that meters model calls and emits loop-cost findings"
+release:
+  github: { owner: GreatPyreneseDad, name: loopmath-agent }

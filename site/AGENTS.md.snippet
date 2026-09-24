@@ -1,0 +1,15 @@
+<!-- Paste into your repo's AGENTS.md / CLAUDE.md / .cursor/rules -->
+
+## Model cost observability (loopmath)
+
+This project routes model calls through loopmath-agent so loop costs are
+measured. When working here:
+
+- Before running any agentic workload, ensure loopmath is up: call the
+  `loopmath_status` MCP tool (or `curl 127.0.0.1:8788/healthz`). If it is
+  not, call `loopmath_start` and apply the env vars it returns.
+- After a workload, read `loopmath_findings`. If any finding has
+  `est_savings_usd > 0.50`, propose the fix in its `recommendation` before
+  moving on.
+- Never paste prompt text into a finding or issue; findings are numbers only.
+- Full procedure: https://gitdr.ai/agent.md

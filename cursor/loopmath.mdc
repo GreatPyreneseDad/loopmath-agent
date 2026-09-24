@@ -1,0 +1,9 @@
+---
+description: Model cost observability via loopmath — use when bills are high, loops run away, or caching misses
+alwaysApply: false
+---
+When the user mentions model cost, token usage, prompt caching, or a looping/runaway agent:
+1. Check the `loopmath` MCP server (`loopmath_status`); start it with `loopmath_start` if needed.
+2. Route this app through it: set ANTHROPIC_BASE_URL=http://localhost:8787 and OPENAI_BASE_URL=http://localhost:8787/openai in the app's env.
+3. After the workload, call `loopmath_findings` and turn each recommendation into a diff. Report est_savings_usd.
+Procedure: https://gitdr.ai/agent.md

@@ -9,6 +9,8 @@ package main
 import (
 	"context"
 	"errors"
+	"flag"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -21,10 +23,21 @@ import (
 	"github.com/GreatPyreneseDad/loopmath-agent/internal/cost"
 	"github.com/GreatPyreneseDad/loopmath-agent/internal/findings"
 	"github.com/GreatPyreneseDad/loopmath-agent/internal/loop"
+	"github.com/GreatPyreneseDad/loopmath-agent/internal/mcp"
 	"github.com/GreatPyreneseDad/loopmath-agent/internal/proxy"
 )
 
 func main() {
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "mcp":
+			runMCP(os.Args[2:])
+			return
+		case "version", "-version", "--version":
+			fmt.Println("loopmath-agent", loop.Version)
+			return
+		}
+	}
 	cfg, err := config.Load(os.Args[1:])
 	if err != nil {
 		log.Fatal(err)
@@ -75,4 +88,25 @@ func main() {
 	defer cancel()
 	proxySrv.Shutdown(ctx)
 	adminSrv.Shutdown(ctx)
+}
+
+// runMCP serves the stdio MCP server:  loopmath-agent mcp [-admin-url ...]
+func runMCP(args []string) {
+	fs := flag.NewFlagSet("loopmath-agent mcp", flag.ExitOnError)
+	adminURL := fs.String("admin-url", envOr("LOOPMATH_ADMIN_URL", "http://127.0.0.1:8788"), "admin API of the running agent")
+	proxyAddr := fs.String("proxy", envOr("LOOPMATH_PROXY_ADDR", ":8787"), "proxy address used when starting the agent")
+	adminAddr := fs.String("admin", envOr("LOOPMATH_ADMIN_ADDR", "127.0.0.1:8788"), "admin address used when starting the agent")
+	fs.Parse(args)
+	self, _ := os.Executable()
+	srv := mcp.New(*adminURL, *proxyAddr, *adminAddr, self, loop.Version)
+	if err := srv.Run(context.Background()); err != nil {
+		log.Fatal(err)
+	}
+}
+
+func envOr(k, d string) string {
+	if v := os.Getenv(k); v != "" {
+		return v
+	}
+	return d
 }

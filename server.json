@@ -1,0 +1,19 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-07-09/server.schema.json",
+  "name": "io.github.GreatPyreneseDad/loopmath-agent",
+  "description": "Meter Anthropic/OpenAI calls through a local proxy and get loop-cost findings: context growth, missed prompt caching, redundant context, runaway loops, retry storms. Prompts never leave the machine.",
+  "repository": { "url": "https://github.com/GreatPyreneseDad/loopmath-agent", "source": "github" },
+  "version": "0.1.0",
+  "packages": [
+    {
+      "registry_type": "npm",
+      "identifier": "loopmath-agent",
+      "version": "0.1.0",
+      "transport": { "type": "stdio" },
+      "package_arguments": [{ "type": "positional", "value": "mcp" }],
+      "environment_variables": [
+        { "name": "LOOPMATH_ADMIN_URL", "description": "Admin API of a running agent (default http://127.0.0.1:8788)", "is_required": false }
+      ]
+    }
+  ]
+}

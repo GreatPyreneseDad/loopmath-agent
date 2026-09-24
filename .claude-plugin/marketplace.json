@@ -1,0 +1,7 @@
+{
+  "name": "loopmath",
+  "owner": { "name": "ROSE Corp", "url": "https://gitdr.ai" },
+  "plugins": [
+    { "name": "loopmath", "source": "./plugin", "description": "Loop-cost findings for agentic workloads via a local proxy. Prompts never leave the machine." }
+  ]
+}
