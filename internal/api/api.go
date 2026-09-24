@@ -16,16 +16,21 @@ import (
 
 type Stats interface{ Stats() (inflight, served int) }
 
+type OTLPStats interface {
+	Stats() (spans, calls, dropped int)
+}
+
 type Server struct {
 	engine *loop.Engine
 	emit   *findings.Emitter
 	price  *cost.Table
 	proxy  Stats
+	otlp   OTLPStats
 	mux    *http.ServeMux
 }
 
-func New(engine *loop.Engine, emit *findings.Emitter, price *cost.Table, proxy Stats) *Server {
-	s := &Server{engine: engine, emit: emit, price: price, proxy: proxy, mux: http.NewServeMux()}
+func New(engine *loop.Engine, emit *findings.Emitter, price *cost.Table, proxy Stats, otlp OTLPStats) *Server {
+	s := &Server{engine: engine, emit: emit, price: price, proxy: proxy, otlp: otlp, mux: http.NewServeMux()}
 	s.mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("ok\n")) })
 	s.mux.HandleFunc("GET /v1/findings", s.findings)
 	s.mux.HandleFunc("GET /findings", s.findings)
@@ -89,6 +94,12 @@ func (s *Server) metrics(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "# TYPE loopmath_findings_total counter\nloopmath_findings_total %d\n", s.emit.Total())
 	fmt.Fprintf(w, "# TYPE loopmath_proxy_inflight gauge\nloopmath_proxy_inflight %d\n", inflight)
 	fmt.Fprintf(w, "# TYPE loopmath_proxy_served_total counter\nloopmath_proxy_served_total %d\n", served)
+	if s.otlp != nil {
+		sp, cl, dr := s.otlp.Stats()
+		fmt.Fprintf(w, "# TYPE loopmath_otlp_spans_total counter\nloopmath_otlp_spans_total %d\n", sp)
+		fmt.Fprintf(w, "# TYPE loopmath_otlp_calls_total counter\nloopmath_otlp_calls_total %d\n", cl)
+		fmt.Fprintf(w, "# TYPE loopmath_otlp_ignored_spans_total counter\nloopmath_otlp_ignored_spans_total %d\n", dr)
+	}
 }
 
 func (s *Server) index(w http.ResponseWriter, r *http.Request) {
@@ -100,5 +111,6 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request) {
 		"agent":        "loopmath-agent/" + loop.Version,
 		"prices_as_of": s.price.AsOf,
 		"endpoints":    []string{"/v1/findings", "/v1/loops", "/v1/loops/{id}", "/metrics", "/healthz"},
+		"ingest":       []string{"proxy: swap ANTHROPIC_BASE_URL / OPENAI_BASE_URL", "otlp: POST :4318/v1/traces (GenAI spans)"},
 	})
 }

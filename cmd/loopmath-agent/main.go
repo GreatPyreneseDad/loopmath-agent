@@ -24,6 +24,7 @@ import (
 	"github.com/GreatPyreneseDad/loopmath-agent/internal/findings"
 	"github.com/GreatPyreneseDad/loopmath-agent/internal/loop"
 	"github.com/GreatPyreneseDad/loopmath-agent/internal/mcp"
+	"github.com/GreatPyreneseDad/loopmath-agent/internal/otlp"
 	"github.com/GreatPyreneseDad/loopmath-agent/internal/proxy"
 )
 
@@ -57,7 +58,8 @@ func main() {
 	if err != nil {
 		log.Fatalf("proxy: %v", err)
 	}
-	adm := api.New(engine, emit, price, px)
+	rcv := otlp.New(engine)
+	adm := api.New(engine, emit, price, px, rcv)
 
 	proxySrv := &http.Server{Addr: cfg.ProxyAddr, Handler: px, ReadHeaderTimeout: 30 * time.Second}
 	adminSrv := &http.Server{Addr: cfg.AdminAddr, Handler: adm, ReadHeaderTimeout: 10 * time.Second}
@@ -74,6 +76,16 @@ func main() {
 			log.Fatal(err)
 		}
 	}()
+	var otlpSrv *http.Server
+	if cfg.OTLPAddr != "" {
+		otlpSrv = &http.Server{Addr: cfg.OTLPAddr, Handler: rcv, ReadHeaderTimeout: 30 * time.Second}
+		go func() {
+			log.Printf("otlp receiver on %s: POST /v1/traces (GenAI spans; protobuf or JSON, gzip ok)", cfg.OTLPAddr)
+			if err := otlpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				log.Fatal(err)
+			}
+		}()
+	}
 	if cfg.SinkURL != "" {
 		log.Printf("findings sink: %s (findings only; no prompt text leaves this host)", cfg.SinkURL)
 	}
@@ -88,6 +100,9 @@ func main() {
 	defer cancel()
 	proxySrv.Shutdown(ctx)
 	adminSrv.Shutdown(ctx)
+	if otlpSrv != nil {
+		otlpSrv.Shutdown(ctx)
+	}
 }
 
 // runMCP serves the stdio MCP server:  loopmath-agent mcp [-admin-url ...]

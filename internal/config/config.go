@@ -17,6 +17,7 @@ type Config struct {
 	// Listeners
 	ProxyAddr string // hot path: where apps point base_url
 	AdminAddr string // cold path: /findings, /loops, /metrics, /healthz
+	OTLPAddr  string // second ingest: OTLP/HTTP GenAI spans on /v1/traces ("" disables)
 
 	// Upstreams
 	AnthropicUpstream string
@@ -96,6 +97,7 @@ func Load(args []string) (*Config, error) {
 
 	fs.StringVar(&c.ProxyAddr, "proxy", env("LOOPMATH_PROXY_ADDR", ":8787"), "proxy listen address (apps point base_url here)")
 	fs.StringVar(&c.AdminAddr, "admin", env("LOOPMATH_ADMIN_ADDR", "127.0.0.1:8788"), "admin listen address (/findings /loops /metrics)")
+	fs.StringVar(&c.OTLPAddr, "otlp", env("LOOPMATH_OTLP_ADDR", ":4318"), "OTLP/HTTP receiver address for GenAI spans (empty disables)")
 	fs.StringVar(&c.AnthropicUpstream, "anthropic", env("LOOPMATH_ANTHROPIC_UPSTREAM", "https://api.anthropic.com"), "Anthropic upstream")
 	fs.StringVar(&c.OpenAIUpstream, "openai", env("LOOPMATH_OPENAI_UPSTREAM", "https://api.openai.com"), "OpenAI-compatible upstream")
 	var extra string

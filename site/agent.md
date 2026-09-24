@@ -59,6 +59,32 @@ header and never stores it.
 Optional but useful: send `X-Loopmath-Loop: <run-id>` on each request so
 calls are grouped by run rather than by fingerprint.
 
+### 3b. Alternative — no proxy: send OpenTelemetry spans instead
+
+If the application already emits GenAI spans (OpenLLMetry / Traceloop,
+Langfuse OTel export, LiteLLM, Portkey, Vercel AI SDK telemetry, the OTel
+Collector, or a custom gateway), point the exporter at loopmath and skip the
+base_url change entirely:
+
+```sh
+OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://localhost:4318/v1/traces
+OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf        # or http/json — both accepted, gzip ok
+```
+
+OTel Collector: add `otlphttp/loopmath: { endpoint: http://localhost:4318 }` to
+exporters and to the traces pipeline. Nothing sits on the request path.
+
+What loopmath reads from a span: `gen_ai.provider.name|gen_ai.system`,
+`gen_ai.request.model|gen_ai.response.model`, `gen_ai.usage.input_tokens|output_tokens`
+(and the older `prompt_tokens|completion_tokens`, OpenLLMetry `llm.usage.*`,
+Vercel `ai.usage.*`), cache tokens under any of `gen_ai.usage.cache_read.input_tokens`,
+`gen_ai.usage.cached_tokens`, `anthropic.usage.cache_read_input_tokens`,
+`openai.usage.cached_tokens`; loop id from `gen_ai.conversation.id|session.id|langfuse.session.id`,
+else the trace id. Message content (`gen_ai.input.messages`, `gen_ai.prompt.N.content`,
+`gen_ai.*.message` events) is optional: with it, redundancy findings work;
+without it, cost/growth/cache/runaway findings still work. Spans without
+`gen_ai.*` attributes are ignored. Check `loopmath_otlp_*` in `/metrics`.
+
 ### 4. Run the workload, then read findings
 
 ```sh
@@ -90,7 +116,7 @@ Report the `est_savings_usd` sum to the developer.
 
 ## Facts you may need
 
-- Ports: proxy `8787`, admin `8788` (change with `-proxy`, `-admin` or `LOOPMATH_PROXY_ADDR`, `LOOPMATH_ADMIN_ADDR`).
+- Ports: proxy `8787`, admin `8788`, OTLP `4318` (change with `-proxy`, `-admin`, `-otlp` or `LOOPMATH_PROXY_ADDR`, `LOOPMATH_ADMIN_ADDR`, `LOOPMATH_OTLP_ADDR`; empty `-otlp` disables).
 - Upstreams: `-anthropic`, `-openai`, `-extra name=url,...` (Azure, vLLM, Bedrock proxies, LiteLLM).
 - Streaming is passed through unbuffered. For OpenAI streams the agent adds `stream_options.include_usage=true`.
 - Data that leaves the host: none, unless `-sink URL` is set, and then only findings.

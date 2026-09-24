@@ -178,6 +178,14 @@ func (s *Server) running() bool {
 	return err == nil
 }
 
+func otlpHost(proxyHost string) string {
+	h := proxyHost
+	if i := strings.LastIndex(h, ":"); i >= 0 {
+		h = h[:i]
+	}
+	return h + ":4318"
+}
+
 func (s *Server) envBlock() string {
 	host := s.proxyAddr
 	if strings.HasPrefix(host, ":") {
@@ -199,8 +207,12 @@ Claude Code:         export ANTHROPIC_BASE_URL=%s   (then restart claude)
 Docker:              use host.docker.internal instead of localhost
 
 API keys are unchanged; the proxy forwards them and never stores them.
+
+No-proxy alternative: if the app already emits OpenTelemetry GenAI spans (OpenLLMetry, Langfuse, LiteLLM, Portkey, Vercel AI SDK, OTel Collector), set
+  OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://%s/v1/traces
+instead of changing base URLs. Same loops, same findings.
 Admin API: %s  (findings: /v1/findings, loops: /v1/loops, metrics: /metrics)`,
-		base, base, base, base, base, base, base, base, s.adminURL)
+		base, base, base, base, base, base, base, base, otlpHost(host), s.adminURL)
 }
 
 func (s *Server) call(ctx context.Context, name string, args json.RawMessage) (string, bool) {

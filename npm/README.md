@@ -59,6 +59,31 @@ Docker:
 docker run -p 8787:8787 -p 127.0.0.1:8788:8788 ghcr.io/greatpyrenesedad/loopmath-agent
 ```
 
+## Two ways in
+
+**Proxy** (default): swap `ANTHROPIC_BASE_URL` / `OPENAI_BASE_URL`. Sees
+everything, including content, so all seven finding kinds fire.
+
+**OTLP receiver** (`:4318/v1/traces`): no proxy on the hot path. Anything that
+already emits OpenTelemetry GenAI spans — OpenLLMetry, Langfuse, LiteLLM,
+Portkey, Vercel AI SDK, the OTel Collector, your own gateway — exports to
+loopmath instead of (or in addition to) wherever it goes today:
+
+```sh
+OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://localhost:4318/v1/traces
+```
+
+Protobuf and JSON encodings, gzip, current and legacy `gen_ai.*` attribute
+names, OpenLLMetry `llm.*`, Vercel `ai.*`. Loop id from
+`gen_ai.conversation.id` / `session.id`, else trace id. Content attributes are
+optional — without them you lose `redundant_context`, nothing else. Same
+loops, same findings, same admin API. This is the ingest for a platform team
+that will not put a new hop in front of a gateway.
+
+Stdlib-only protobuf decoding (`internal/otlp/pb.go`, ~300 lines) — no
+generated code, no dependency. Validated against the real
+`opentelemetry-exporter-otlp-proto-http` Python SDK.
+
 ## What it sees, what it keeps, what it sends
 
 | Stage | Data | Retained? |

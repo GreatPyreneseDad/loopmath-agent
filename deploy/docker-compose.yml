@@ -4,6 +4,7 @@ services:
     image: loopmath-agent:0.1.0
     ports:
       - "8787:8787"
+      - "4318:4318"
       - "127.0.0.1:8788:8788"
     environment:
       LOOPMATH_SINK_URL: ""            # e.g. https://gitdr.ai/api/v1/findings
