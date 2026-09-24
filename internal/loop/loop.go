@@ -41,7 +41,7 @@ type Loop struct {
 	UnknownPrice bool       `json:"unknown_price"`
 
 	// series (bounded)
-	Context []int     `json:"context_tokens"` // input+cache_read per call
+	Context []int     `json:"context_tokens"` // input+cache_read+cache_write per call (full prompt size)
 	CallUSD []float64 `json:"call_usd"`
 	Latency []float64 `json:"latency_ms"`
 
@@ -141,7 +141,7 @@ func (e *Engine) Observe(c *meter.Call, headerHint string) *Loop {
 	l.Usage.CacheRead += c.Usage.CacheRead
 	l.Usage.CacheWrite += c.Usage.CacheWrite
 	l.USD += usd
-	ctx := c.Usage.Input + c.Usage.CacheRead
+	ctx := c.Usage.Input + c.Usage.CacheRead + c.Usage.CacheWrite
 	if n := len(l.Context); n > 0 {
 		l.CacheableTokens += min(l.Context[n-1], ctx)
 	}
@@ -149,7 +149,7 @@ func (e *Engine) Observe(c *meter.Call, headerHint string) *Loop {
 	l.CallUSD = appendBounded(l.CallUSD, usd, 2000)
 	l.Latency = appendBounded(l.Latency, float64(c.Latency.Milliseconds()), 2000)
 	if l.CacheableTokens > 0 {
-		l.CacheRate = float64(l.Usage.CacheRead) / float64(l.CacheableTokens)
+		l.CacheRate = min(1, float64(l.Usage.CacheRead)/float64(l.CacheableTokens))
 	}
 	if usd > l.CallUSD[l.DominantCall] {
 		l.DominantCall = len(l.CallUSD) - 1
@@ -191,7 +191,7 @@ func (e *Engine) base(l *Loop, c *meter.Call, kind findings.Kind, sev findings.S
 	}
 }
 
-var Version = "0.1.0"
+var Version = "0.1.1"
 
 func round(f float64) float64 { return math.Round(f*1e4) / 1e4 }
 

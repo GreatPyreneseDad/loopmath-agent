@@ -1,7 +1,7 @@
 # Sidecar pattern: your app talks to loopmath-agent on the compose network.
 services:
   loopmath-agent:
-    image: loopmath-agent:0.1.0
+    image: loopmath-agent:0.1.1
     ports:
       - "8787:8787"
       - "4318:4318"

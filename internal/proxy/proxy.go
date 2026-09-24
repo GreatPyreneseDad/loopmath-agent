@@ -127,7 +127,11 @@ func (x *exchange) finish(status int, body []byte, sse bool) {
 				meter.ParseResponse(c, body)
 			}
 		}
-		x.p.engine.Observe(c, x.loopHdr)
+		// only model calls become loop members; GET /v1/models, count_tokens,
+		// files etc. pass through unmetered
+		if c.Model != "" || c.Usage.Total() > 0 {
+			x.p.engine.Observe(c, x.loopHdr)
+		}
 		x.p.mu.Lock()
 		x.p.inflight--
 		x.p.served++

@@ -35,10 +35,12 @@ Cursor rule in [`cursor/`](cursor/), MCP registry manifest in [`server.json`](se
 
 ## Install (humans)
 
+Download a binary from [Releases](https://github.com/GreatPyreneseDad/loopmath-agent/releases) (linux/darwin/windows, amd64/arm64), or:
+
 ```sh
-curl -fsSL https://gitdr.ai/install.sh | sh          # or:
-go install github.com/GreatPyreneseDad/loopmath-agent/cmd/loopmath-agent@latest
-npx -y loopmath-agent                                 # or:
+curl -fsSL https://gitdr.ai/install.sh | sh                                        # macOS/Linux
+go install github.com/GreatPyreneseDad/loopmath-agent/cmd/loopmath-agent@latest    # if you have Go
+docker run -p 8787:8787 -p 4318:4318 ghcr.io/greatpyrenesedad/loopmath-agent       # container
 loopmath-agent
 ```
 

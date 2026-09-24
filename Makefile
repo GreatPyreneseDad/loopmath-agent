@@ -1,5 +1,5 @@
 BIN := bin/loopmath-agent
-VERSION ?= 0.1.0
+VERSION ?= 0.1.1
 
 .PHONY: build test docker run clean
 build:
